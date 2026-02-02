@@ -1,0 +1,9 @@
+{
+  "name": "wa-api",
+  "private": true,
+  "type": "commonjs",
+  "dependencies": {
+    "fastify": "^4.26.2",
+    "ioredis": "^5.3.2"
+  }
+}
