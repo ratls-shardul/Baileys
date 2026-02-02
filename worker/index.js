@@ -7,7 +7,7 @@ async function start() {
   console.log("🚀 WhatsApp worker starting...")
 
   // Optional preload (can remove later)
-  await initClient("client-1")
+  // await initClient("client-1")
   // await initClient("client-2")
 
   // 🔥 THIS WAS MISSING
