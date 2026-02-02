@@ -12,7 +12,6 @@ async function startCommandListener() {
 
   while (true) {
     try {
-      // BLOCK until a command arrives
       const res = await redis.brpop("wa:commands", 0)
 
       const payload = JSON.parse(res[1])

@@ -38,7 +38,8 @@ async function initClient(clientId) {
     // logger: Pino({ level: "debug" }),
     logger: Pino({ level: "silent" }),
     printQRInTerminal: false,
-    browser: ["Chrome", "Linux", "120.0.0"]
+    markOnlineOnConnect: false,
+    browser: ["Admissions - CRM", "Linux", "120.0.0"]
   })
 
     sock.ev.on("creds.update", saveCreds)
@@ -48,7 +49,6 @@ sock.ev.on("connection.update", async (update) => {
 
   const { connection, qr, lastDisconnect } = update
 
-  // 📲 QR required
   if (qr) {
     await setClientState(clientId, STATES.QR_REQUIRED)
     console.log(`\n📲 Scan QR for ${clientId}\n`)
@@ -57,7 +57,6 @@ sock.ev.on("connection.update", async (update) => {
     return
   }
 
-  // ✅ Connected
   if (connection === "open") {
     await setClientState(clientId, STATES.CONNECTED)
     connectedClients.add(clientId)
@@ -65,7 +64,6 @@ sock.ev.on("connection.update", async (update) => {
     console.log(`✅ ${clientId} connected`)
     bootingClients.delete(clientId)
 
-    // ⛔ Prevent double send loops
     if (sendingClients.has(clientId)) {
       console.log(`⏳ ${clientId} already flushing messages`)
       return
@@ -97,7 +95,6 @@ sock.ev.on("connection.update", async (update) => {
     return
   }
 
-  // ❌ Disconnected
   if (connection === "close") {
     connectedClients.delete(clientId)
     sendingClients.delete(clientId)
@@ -137,10 +134,8 @@ sock.ev.on("connection.update", async (update) => {
 }
 
 async function startSenderLoop(clientId) {
-  // already sending → do nothing
   if (sendingClients.has(clientId)) return
 
-  // not connected → do nothing
   if (!connectedClients.has(clientId)) return
 
   const sock = sockets.get(clientId)
@@ -160,7 +155,6 @@ async function startSenderLoop(clientId) {
       const payload = JSON.parse(raw)
       const jid = `91${payload.phoneNumber}@s.whatsapp.net`
 
-      // delay ONLY between messages
       if (!isFirstMessage) {
         await randomDelay(1500, 4000)
       }
@@ -175,7 +169,6 @@ async function startSenderLoop(clientId) {
   } finally {
     sendingClients.delete(clientId)
 
-    // if new messages arrived while sending → restart
     const remaining = await redis.llen(`wa:pending:${clientId}`)
     if (remaining > 0 && connectedClients.has(clientId)) {
       startSenderLoop(clientId)

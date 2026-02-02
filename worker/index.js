@@ -8,12 +8,13 @@ async function start() {
 
   // Optional preload (can remove later)
   // await initClient("client-1")
-  // await initClient("client-2")
 
-  // 🔥 THIS WAS MISSING
+//   for (let i = 0; i <= 200; i++) {
+//   await initClient(`client-${i}`);
+// }
+
   startCommandListener()
 
-  // Keep process alive
   setInterval(() => {}, 60_000)
 }
 

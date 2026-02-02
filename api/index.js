@@ -3,7 +3,6 @@ const redis = require("./redis")
 
 const start = async () => {
   try {
-    // Register plugins INSIDE async function
     await fastify.register(require("@fastify/cors"), {
       origin: true
     })
@@ -11,7 +10,6 @@ const start = async () => {
     fastify.register(require("./routes/clients"))
     fastify.register(require("./routes/messages"))
 
-    // Ensure Redis is reachable
     await redis.ping()
     console.log("✅ Redis connected")
 

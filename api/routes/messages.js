@@ -22,13 +22,11 @@ module.exports = async function (fastify) {
     }
 
     if (state === "CONNECTED") {
-      // send immediately
       await redis.lpush("wa:commands", JSON.stringify(payload))
 
       return { ok: true, queued: false }
     }
 
-    // not connected → queue for later
     await redis.lpush(
       `wa:pending:${clientId}`,
       JSON.stringify(payload)

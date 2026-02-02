@@ -4,12 +4,10 @@ const STATE_KEY = "wa:clients:state"
 
 module.exports = async function (fastify) {
 
-  // 🔍 List all clients + states
   fastify.get("/clients", async () => {
     return await redis.hgetall(STATE_KEY)
   })
 
-  // ➕ Create / init client (QR flow)
   fastify.post("/clients/:clientId", async (req, res) => {
     const { clientId } = req.params
 
@@ -23,7 +21,6 @@ module.exports = async function (fastify) {
     return { ok: true, clientId }
   })
 
-  // 🔄 Reconnect after logout
   fastify.post("/clients/:clientId/reconnect", async (req, res) => {
     const { clientId } = req.params
     const state = await redis.hget(STATE_KEY, clientId)
@@ -47,7 +44,6 @@ module.exports = async function (fastify) {
 
   const state = await redis.hget(STATE_KEY, clientId);
 
-  // ✅ Client has never been created
   if (!state) {
     return {
       clientId,
