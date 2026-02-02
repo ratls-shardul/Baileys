@@ -41,4 +41,24 @@ module.exports = async function (fastify) {
 
     return { ok: true, clientId }
   })
+
+  fastify.get("/clients/:clientId/status", async (req, res) => {
+  const { clientId } = req.params;
+
+  const state = await redis.hget(STATE_KEY, clientId);
+
+  // ✅ Client has never been created
+  if (!state) {
+    return {
+      clientId,
+      state: "NON_EXISTENT"
+    };
+  }
+
+  return {
+    clientId,
+    state
+  };
+});
+
 }
