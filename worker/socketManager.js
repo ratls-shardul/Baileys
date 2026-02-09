@@ -18,8 +18,13 @@ const sockets = new Map()
 const sendingClients = new Set()
 const connectedClients = new Set()
 
+
 // let isBooting = true
 const bootingClients = new Set()
+
+function publishEvent(event) {
+  redis.publish("wa:events", JSON.stringify(event))
+}
 
 async function initClient(clientId) {
   bootingClients.add(clientId)
@@ -50,7 +55,12 @@ sock.ev.on("connection.update", async (update) => {
   const { connection, qr, lastDisconnect } = update
 
   if (qr) {
-    await setClientState(clientId, STATES.QR_REQUIRED)
+      await setClientState(clientId, STATES.QR_REQUIRED)
+      publishEvent({
+        type: "qr",
+        clientId,
+        qr
+      })
     console.log(`\n📲 Scan QR for ${clientId}\n`)
     require("qrcode-terminal").generate(qr, { small: true })
     bootingClients.delete(clientId)
@@ -59,6 +69,11 @@ sock.ev.on("connection.update", async (update) => {
 
   if (connection === "open") {
     await setClientState(clientId, STATES.CONNECTED)
+    publishEvent({
+      type: "status",
+      clientId,
+      state: "CONNECTED"
+    })
     connectedClients.add(clientId)
 
     console.log(`✅ ${clientId} connected`)
@@ -112,6 +127,11 @@ sock.ev.on("connection.update", async (update) => {
     // 🚪 Logged out / Unauthorized
     if (statusCode === DisconnectReason.loggedOut || statusCode === 401) {
       await setClientState(clientId, STATES.LOGGED_OUT)
+      publishEvent({
+        type: "status",
+        clientId,
+        state: "LOGGED_OUT"
+      })
       sockets.delete(clientId)
       clearSession(clientId)
       console.log(`📲 ${clientId} requires new QR`)
@@ -120,6 +140,11 @@ sock.ev.on("connection.update", async (update) => {
 
     // 🌐 Transient disconnect
     await setClientState(clientId, STATES.DISCONNECTED)
+    publishEvent({
+      type: "status",
+      clientId,
+      state: "DISCONNECTED"
+    })
     sockets.delete(clientId)
 
     setTimeout(() => {

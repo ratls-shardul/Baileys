@@ -3,12 +3,19 @@ const redis = require("./redis")
 
 const start = async () => {
   try {
+    // 🔑 plugins FIRST
+    await fastify.register(require("@fastify/websocket"))
+    // await fastify.register(require("@fastify/multipart"))
     await fastify.register(require("@fastify/cors"), {
       origin: true
     })
 
+    // 🔑 routes AFTER
+    fastify.register(require("./routes/ws"))
     fastify.register(require("./routes/clients"))
     fastify.register(require("./routes/messages"))
+
+    require("./redisSubscriber")
 
     await redis.ping()
     console.log("✅ Redis connected")
