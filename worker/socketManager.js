@@ -15,8 +15,8 @@ const redis = new Redis({
 })
 
 const sockets = new Map()
-const sendingClients = new Set()
 const connectedClients = new Set()
+const senderLoops = new Set()
 
 
 // let isBooting = true
@@ -74,45 +74,19 @@ sock.ev.on("connection.update", async (update) => {
       clientId,
       state: "CONNECTED"
     })
-    connectedClients.add(clientId)
 
+    connectedClients.add(clientId)
     console.log(`✅ ${clientId} connected`)
+
     bootingClients.delete(clientId)
 
-    if (sendingClients.has(clientId)) {
-      console.log(`⏳ ${clientId} already flushing messages`)
-      return
-    }
+    startSenderLoop(clientId) // 🔥 ONLY THIS
 
-    sendingClients.add(clientId)
-
-    const pendingKey = `wa:pending:${clientId}`
-
-    try {
-      while (true) {
-        const msg = await redis.rpop(pendingKey)
-        if (!msg) break
-
-        const payload = JSON.parse(msg)
-        const jid = `91${payload.phoneNumber}@s.whatsapp.net`
-
-        console.log(`📤 Sending queued message via ${clientId}`)
-
-        await sendMessageWithMedia(sock, jid, payload)
-        await randomDelay(1500, 4000)
-      }
-    } catch (err) {
-      console.error(`❌ Error while sending messages for ${clientId}`, err)
-    } finally {
-      sendingClients.delete(clientId)
-    }
-    startSenderLoop(clientId)
     return
   }
 
   if (connection === "close") {
     connectedClients.delete(clientId)
-    sendingClients.delete(clientId)
     const statusCode =
       lastDisconnect?.error?.output?.statusCode ??
       lastDisconnect?.error?.output?.payload?.statusCode
@@ -158,45 +132,46 @@ sock.ev.on("connection.update", async (update) => {
   return sock
 }
 
+function sleep(ms) {
+  return new Promise((res) => setTimeout(res, ms))
+}
+
+function randomBetween(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min
+}
+
 async function startSenderLoop(clientId) {
-  if (sendingClients.has(clientId)) return
+  if (senderLoops.has(clientId)) return
 
-  if (!connectedClients.has(clientId)) return
+  senderLoops.add(clientId)
+  console.log(`▶️ Sender loop started for ${clientId}`)
 
-  const sock = sockets.get(clientId)
-  if (!sock) return
-
-  sendingClients.add(clientId)
-
-  const pendingKey = `wa:pending:${clientId}`
-
-  try {
-    let isFirstMessage = true
-
-    while (true) {
-      const raw = await redis.rpop(pendingKey)
-      if (!raw) break
-
+  while (true) {
+    try {
+      // 🔑 BLOCK until a message arrives
+      const res = await redis.brpop(`wa:pending:${clientId}`, 0)
+      const raw = res[1]
       const payload = JSON.parse(raw)
-      const jid = `91${payload.phoneNumber}@s.whatsapp.net`
 
-      if (!isFirstMessage) {
-        await randomDelay(1500, 4000)
+      const sock = sockets.get(clientId)
+      if (!sock) {
+        console.log(`⏸️ ${clientId} socket missing, re-queueing`)
+        await redis.lpush(`wa:pending:${clientId}`, raw)
+        await sleep(3000)
+        continue
       }
 
-      isFirstMessage = false
+      const jid = `91${payload.phoneNumber}@s.whatsapp.net`
 
-      console.log(`📤 Sending message via ${clientId}`)
+      console.log(`📤 Sending via ${clientId} → ${payload.phoneNumber}`)
+
       await sendMessageWithMedia(sock, jid, payload)
-    }
-  } catch (err) {
-    console.error(`❌ Sender loop error for ${clientId}`, err)
-  } finally {
-    sendingClients.delete(clientId)
 
-    const remaining = await redis.llen(`wa:pending:${clientId}`)
-    if (remaining > 0 && connectedClients.has(clientId)) {
-      startSenderLoop(clientId)
+      // 🎲 RANDOM DELAY AFTER SEND
+      await sleep(randomBetween(2000, 5000))
+    } catch (err) {
+      console.error(`❌ Sender loop error for ${clientId}`, err)
+      await sleep(5000)
     }
   }
 }
