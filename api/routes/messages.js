@@ -1,5 +1,5 @@
 const redis = require("../redis")
-const { startSenderLoop } = require("../worker/socketManager")
+const { startSenderLoop } = require("../../worker/socketManager")
 
 module.exports = async function (fastify) {
   fastify.post("/messages/send", async (req, res) => {
