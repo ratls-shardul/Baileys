@@ -1,4 +1,5 @@
 const redis = require("../redis")
+const { startSenderLoop } = require("../socketManager")
 
 module.exports = async function (fastify) {
   fastify.post("/messages/send", async (req, res) => {
@@ -22,6 +23,8 @@ module.exports = async function (fastify) {
         media
       })
     )
+
+    startSenderLoop(clientId)
 
     return { ok: true, queued: true }
   })
