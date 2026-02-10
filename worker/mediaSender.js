@@ -1,64 +1,64 @@
 const axios = require("axios")
 
 async function sendMessageWithMedia(sock, jid, payload) {
-  const { text, files = [] } = payload
+  const { text, media = [] } = payload
 
-  const hasText = typeof text === "string" && text.trim().length > 0
-
-  // CASE 1: Only text
-  if (!files.length) {
-    if (!hasText) return // 🔒 nothing to send
-    await sock.sendMessage(jid, { text: text })
+  // TEXT ONLY
+  if (!media.length) {
+    if (!text) return
+    await sock.sendMessage(jid, { text })
     return
   }
 
-  // CASE 2: Single media (caption)
-  if (files.length === 1) {
-    const file = files[0]
-    const media = await fetchMedia(file)
+  // SINGLE MEDIA
+  if (media.length === 1) {
+    const m = media[0]
 
-    const message = { ...media }
-
-    // ✅ caption only if valid
-    if (hasText) {
-      message.caption = text
-    }
-
+    const message = buildMediaMessage(m, text)
     await sock.sendMessage(jid, message)
     return
   }
 
-  // CASE 3: Multiple media
-  for (const file of files) {
-    const media = await fetchMedia(file)
-    await sock.sendMessage(jid, media)
+  // MULTIPLE MEDIA
+  for (const m of media) {
+    const message = buildMediaMessage(m)
+    await sock.sendMessage(jid, message)
   }
 
-  // Send text separately at the end (ONLY if valid)
-  if (hasText) {
-    await sock.sendMessage(jid, { text: text })
+  if (text) {
+    await sock.sendMessage(jid, { text })
   }
 }
 
-async function fetchMedia(file) {
-  const response = await axios.get(file.file_url, {
-    responseType: "arraybuffer"
-  })
+function buildMediaMessage(media, caption) {
+  const { url, mimetype, filename } = media
 
-  const buffer = Buffer.from(response.data)
-
-  if (file.mimeType.startsWith("image/")) {
-    return { image: buffer }
+  if (mimetype.startsWith("image/")) {
+    return {
+      image: { url },
+      caption
+    }
   }
 
-  if (file.mimeType.startsWith("video/")) {
-    return { video: buffer }
+  if (mimetype.startsWith("video/")) {
+    return {
+      video: { url },
+      caption
+    }
   }
 
+  if (mimetype.startsWith("audio/")) {
+    return {
+      audio: { url },
+      mimetype
+    }
+  }
+
+  // documents (pdf, docx, etc)
   return {
-    document: buffer,
-    mimetype: file.mimeType,
-    fileName: file.filename
+    document: { url },
+    mimetype,
+    fileName: filename || "file"
   }
 }
 
