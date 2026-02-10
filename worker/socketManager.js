@@ -75,6 +75,10 @@ sock.ev.on("connection.update", async (update) => {
       state: "CONNECTED"
     })
 
+    setTimeout(() => {
+      startSenderLoop(clientId)
+    }, 2000)
+
     connectedClients.add(clientId)
     console.log(`✅ ${clientId} connected`)
 
@@ -161,7 +165,11 @@ async function startSenderLoop(clientId) {
         continue
       }
 
-      const jid = `91${payload.phoneNumber}@s.whatsapp.net`
+      const phone = payload.phoneNumber.toString()
+
+      const jid = phone.includes("@s.whatsapp.net")
+        ? phone
+        : `91${phone}@s.whatsapp.net`
 
       console.log(`📤 Sending via ${clientId} → ${payload.phoneNumber}`)
 
