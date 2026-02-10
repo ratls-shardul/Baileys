@@ -9,9 +9,9 @@ async function start() {
   // Optional preload (can remove later)
   // await initClient("client-1")
 
-//   for (let i = 0; i <= 200; i++) {
-//   await initClient(`client-${i}`);
-// }
+  for (let i = 0; i <= 200; i++) {
+  await initClient(`client-${i}`);
+}
 
   startCommandListener()
 
