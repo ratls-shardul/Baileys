@@ -31,32 +31,32 @@ async function sendMessageWithMedia(sock, jid, payload) {
 }
 
 function buildMediaMessage(files, caption) {
-  const { url, mimetype, filename } = files
+  const { file_url, mimetype, filename } = files
 
   if (mimetype.startsWith("image/")) {
     return {
-      image: { url },
+      image: { file_url },
       caption
     }
   }
 
   if (mimetype.startsWith("video/")) {
     return {
-      video: { url },
+      video: { file_url },
       caption
     }
   }
 
   if (mimetype.startsWith("audio/")) {
     return {
-      audio: { url },
+      audio: { file_url },
       mimetype
     }
   }
 
   // documents (pdf, docx, etc)
   return {
-    document: { url },
+    document: { file_url },
     mimetype,
     fileName: filename || "file"
   }
