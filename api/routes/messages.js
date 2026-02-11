@@ -2,13 +2,13 @@ const redis = require("../redis")
 
 module.exports = async function (fastify) {
   fastify.post("/messages/send", async (req, res) => {
-    const { clientId, phoneNumber, text, media = [] } = req.body
+    const { clientId, phoneNumber, text, files = [] } = req.body
 
     if (!clientId || !phoneNumber) {
       return res.code(400).send({ error: "Missing fields" })
     }
 
-    if (!text && !media.length) {
+    if (!text && !files.length) {
       return res.code(400).send({ error: "Nothing to send" })
     }
 
@@ -19,7 +19,7 @@ module.exports = async function (fastify) {
         clientId,
         phoneNumber,
         text,
-        media
+        files
       })
     )
 
