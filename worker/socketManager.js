@@ -41,7 +41,7 @@ async function initClient(clientId) {
   const sock = makeWASocket({
     auth: state,
     // logger: Pino({ level: "debug" }),
-    logger: Pino({ level: "silent" }),
+    logger: Pino({ level: "silent" }).child({level: "silent" }),
     printQRInTerminal: false,
     markOnlineOnConnect: false,
     browser: ["Admissions - CRM", "Linux", "120.0.0"]
@@ -170,8 +170,6 @@ async function startSenderLoop(clientId) {
       const jid = phone.includes("@s.whatsapp.net")
         ? phone
         : `91${phone}@s.whatsapp.net`
-
-      console.log('JID is: ', jid)
 
       console.log(`📤 Sending via ${clientId} → ${payload.phoneNumber}`)
 

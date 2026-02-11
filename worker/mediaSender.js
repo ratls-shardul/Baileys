@@ -1,26 +1,26 @@
 const axios = require("axios")
 
 async function sendMessageWithMedia(sock, jid, payload) {
-  const { text, media = [] } = payload
+  const { text, files = [] } = payload
 
   // TEXT ONLY
-  if (!media.length) {
+  if (!files.length) {
     if (!text) return
     await sock.sendMessage(jid, { text })
     return
   }
 
-  // SINGLE MEDIA
-  if (media.length === 1) {
-    const m = media[0]
+  // SINGLE files
+  if (files.length === 1) {
+    const m = files[0]
 
     const message = buildMediaMessage(m, text)
     await sock.sendMessage(jid, message)
     return
   }
 
-  // MULTIPLE MEDIA
-  for (const m of media) {
+  // MULTIPLE files
+  for (const m of files) {
     const message = buildMediaMessage(m)
     await sock.sendMessage(jid, message)
   }
@@ -30,8 +30,8 @@ async function sendMessageWithMedia(sock, jid, payload) {
   }
 }
 
-function buildMediaMessage(media, caption) {
-  const { url, mimetype, filename } = media
+function buildMediaMessage(files, caption) {
+  const { url, mimetype, filename } = files
 
   if (mimetype.startsWith("image/")) {
     return {
