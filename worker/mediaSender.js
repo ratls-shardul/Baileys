@@ -6,7 +6,8 @@ async function sendMessageWithMedia(sock, jid, payload) {
   // TEXT ONLY
   if (!files.length) {
     if (!text) return
-    await sock.sendMessage(jid, { text })
+    const res = await sock.sendMessage(jid, { text })
+    console.log("response from sendMessage", res)
     return
   }
 
@@ -15,18 +16,21 @@ async function sendMessageWithMedia(sock, jid, payload) {
     const m = files[0]
 
     const message = buildMediaMessage(m, text)
-    await sock.sendMessage(jid, message)
+    const res = await sock.sendMessage(jid, message)
+    console.log("response from sendMessage single media", res)
     return
   }
 
   // MULTIPLE files
   for (const m of files) {
     const message = buildMediaMessage(m)
-    await sock.sendMessage(jid, message)
+    const res = await sock.sendMessage(jid, message)
+    console.log("response from sendMessage multiple media", res)
   }
 
   if (text) {
-    await sock.sendMessage(jid, { text })
+    const res = await sock.sendMessage(jid, { text })
+    console.log("response from sendMessage text only", res)
   }
 }
 
