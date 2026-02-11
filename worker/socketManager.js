@@ -105,14 +105,24 @@ sock.ev.on("connection.update", async (update) => {
     // 🚪 Logged out / Unauthorized
     if (statusCode === DisconnectReason.loggedOut || statusCode === 401) {
       await setClientState(clientId, STATES.LOGGED_OUT)
+
       publishEvent({
         type: "status",
         clientId,
         state: "LOGGED_OUT"
       })
+
       sockets.delete(clientId)
       clearSession(clientId)
+
       console.log(`📲 ${clientId} requires new QR`)
+
+      // 🔥 Auto re-init to generate new QR
+      setTimeout(() => {
+        console.log(`🔄 Reinitializing ${clientId} for new QR`)
+        initClient(clientId)
+      }, 1000)
+
       return
     }
 
