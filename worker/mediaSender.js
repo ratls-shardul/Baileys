@@ -30,33 +30,32 @@ async function sendMessageWithMedia(sock, jid, payload) {
   }
 }
 
-function buildMediaMessage(files, caption) {
-  const { file_url, mimetype, filename } = files
+function buildMediaMessage(file, caption) {
+  const { file_url, mimetype, filename } = file
 
   if (mimetype.startsWith("image/")) {
     return {
-      image: { file_url },
-      caption
+      image: { url: file_url },  // ✅ FIX
+      ...(caption && { caption })
     }
   }
 
   if (mimetype.startsWith("video/")) {
     return {
-      video: { file_url },
-      caption
+      video: { url: file_url },  // ✅ FIX
+      ...(caption && { caption })
     }
   }
 
   if (mimetype.startsWith("audio/")) {
     return {
-      audio: { file_url },
+      audio: { url: file_url },  // ✅ FIX
       mimetype
     }
   }
 
-  // documents (pdf, docx, etc)
   return {
-    document: { file_url },
+    document: { url: file_url }, // ✅ FIX
     mimetype,
     fileName: filename || "file"
   }
