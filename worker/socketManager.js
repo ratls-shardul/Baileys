@@ -23,6 +23,7 @@ const senderLoops = new Set()
 const bootingClients = new Set()
 
 function publishEvent(event) {
+  console.log("PUBLISHING EVENT:", event)
   redis.publish("wa:events", JSON.stringify(event))
 }
 
@@ -123,6 +124,7 @@ async function initClient(clientId) {
         clearSession(clientId)
 
         console.log(`📲 ${clientId} requires new QR`)
+        bootingClients.delete(clientId)
 
         // 🔥 Auto re-init to generate new QR
         setTimeout(() => {
