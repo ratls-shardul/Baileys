@@ -1,3 +1,5 @@
+const WebSocket = require('ws')
+
 const clients = new Map()
 // clientId -> Set<ws>
 
@@ -23,10 +25,11 @@ function broadcast(clientId, payload) {
   console.log("BROADCAST to", clientId, "sockets:", sockets?.size)
 
   if (!sockets) return
+
   const msg = JSON.stringify(payload)
 
   for (const ws of sockets) {
-    if (ws.readyState === ws.OPEN) {
+    if (ws.readyState === WebSocket.OPEN) {
       ws.send(msg)
     }
   }
