@@ -17,6 +17,10 @@ const start = async () => {
     await redis.ping()
     console.log("✅ Redis connected")
 
+    fastify.get("/health", async () => {
+      return { status: "ok" }
+    })
+
     await fastify.listen({ port: 3000, host: "0.0.0.0" })
     console.log("🚀 API running on port 3000")
   } catch (err) {
