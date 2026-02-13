@@ -20,7 +20,7 @@ const senderLoops = new Set()
 
 
 // let isBooting = true
-const bootingClients = new Set()
+// const bootingClients = new Set()
 
 function publishEvent(event) {
   console.log("PUBLISHING EVENT:", event)
@@ -28,7 +28,7 @@ function publishEvent(event) {
 }
 
 async function initClient(clientId) {
-  bootingClients.add(clientId)
+  // bootingClients.add(clientId)
   await setClientState(clientId, STATES.CONNECTING)
   if (sockets.has(clientId)) {
     console.log(`⚠️ Client ${clientId} already initialized`)
@@ -67,7 +67,7 @@ async function initClient(clientId) {
         qr
       })
 
-      bootingClients.delete(clientId)
+      // bootingClients.delete(clientId)
       return
     }
 
@@ -86,7 +86,7 @@ async function initClient(clientId) {
 
       connectedClients.add(clientId)
 
-      bootingClients.delete(clientId)
+      // bootingClients.delete(clientId)
 
       console.log(`✅ ${clientId} connected successfully`)
 
@@ -103,10 +103,10 @@ async function initClient(clientId) {
         lastDisconnect?.error?.output?.statusCode ??
         lastDisconnect?.error?.output?.payload?.statusCode
 
-      if (statusCode === undefined && bootingClients.has(clientId)) {
-        console.log(`🟡 ${clientId} waiting for QR...`)
-        return
-      }
+      // if (statusCode === undefined && bootingClients.has(clientId)) {
+      //   console.log(`🟡 ${clientId} waiting for QR...`)
+      //   return
+      // }
 
       console.log(`❌ ${clientId} disconnected (${statusCode})`)
 
@@ -131,7 +131,7 @@ async function initClient(clientId) {
         clearSession(clientId)
 
         console.log(`📲 ${clientId} requires new QR`)
-        bootingClients.delete(clientId)
+        // bootingClients.delete(clientId)
 
         // 🔥 Auto re-init to generate new QR
         setTimeout(() => {
