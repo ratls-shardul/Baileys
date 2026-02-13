@@ -161,7 +161,7 @@ async function initClient(clientId) {
     }
   })
 
-  console.log('sockets after update: ',sockets)
+  // console.log('sockets after update: ',sockets)
   return sock
 }
 
