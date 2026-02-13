@@ -1,4 +1,4 @@
-const { register, unregister } = require("../wsHub")
+const { register } = require("../wsHub")
 const redis = require("../redis")
 
 module.exports = async function (fastify) {
@@ -50,18 +50,14 @@ module.exports = async function (fastify) {
 
       } catch (err) {
         console.error("❌ WS message error:", err)
-        socket.send(JSON.stringify({
-          type: "error",
-          message: err.message
-        }))
-      }
-    })
-
-    // Handle WebSocket close
-    socket.on("close", () => {
-      if (registered && clientId) {
-        console.log(`🔌 WebSocket closed for ${clientId}`)
-        unregister(clientId, socket)
+        try {
+          socket.send(JSON.stringify({
+            type: "error",
+            message: err.message
+          }))
+        } catch (sendErr) {
+          console.error("❌ Failed to send error message:", sendErr)
+        }
       }
     })
 
@@ -71,9 +67,13 @@ module.exports = async function (fastify) {
     })
 
     // Send initial connection confirmation
-    socket.send(JSON.stringify({
-      type: "connected",
-      message: "WebSocket connected. Send {clientId: 'your-id'} to register."
-    }))
+    try {
+      socket.send(JSON.stringify({
+        type: "connected",
+        message: "WebSocket connected. Send {clientId: 'your-id'} to register."
+      }))
+    } catch (err) {
+      console.error("❌ Failed to send initial message:", err)
+    }
   })
 }

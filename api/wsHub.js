@@ -1,79 +1,90 @@
-const { register, unregister } = require("../wsHub")
-const redis = require("../redis")
+// No external dependencies needed
+const clients = new Map()
+// clientId -> Set<WebSocket>
 
-module.exports = async function (fastify) {
-  fastify.get("/ws", { websocket: true }, (connection, req) => {
-    // Extract the actual WebSocket from Fastify's wrapper
-    const socket = connection.socket
-    
-    let clientId = null
-    let registered = false
+function register(clientId, ws) {
+  console.log(`📝 Registering WebSocket for: ${clientId}`)
+  
+  if (!clients.has(clientId)) {
+    clients.set(clientId, new Set())
+  }
 
-    // Handle incoming messages from frontend
-    socket.on("message", async (raw) => {
-      try {
-        const data = JSON.parse(raw.toString())
-        
-        if (!data.clientId) {
-          socket.send(JSON.stringify({
-            type: "error",
-            message: "clientId is required"
-          }))
-          return
-        }
+  const clientSockets = clients.get(clientId)
+  clientSockets.add(ws)
+  
+  console.log(`✅ Total sockets for ${clientId}: ${clientSockets.size}`)
 
-        // Register socket on first message
-        if (!registered) {
-          clientId = data.clientId
-          register(clientId, socket)
-          registered = true
-          console.log(`✅ WebSocket registered for ${clientId}`)
-        }
-
-        // Send current state
-        const state = await redis.hget("wa:clients:state", data.clientId)
-        socket.send(JSON.stringify({
-          type: "status",
-          clientId: data.clientId,
-          state: state || "NON_EXISTENT"
-        }))
-
-        // Send QR if available
-        const qr = await redis.get(`wa:qr:${data.clientId}`)
-        if (qr) {
-          socket.send(JSON.stringify({
-            type: "qr",
-            clientId: data.clientId,
-            qr
-          }))
-        }
-
-      } catch (err) {
-        console.error("❌ WS message error:", err)
-        socket.send(JSON.stringify({
-          type: "error",
-          message: err.message
-        }))
-      }
-    })
-
-    // Handle WebSocket close
-    socket.on("close", () => {
-      if (registered && clientId) {
-        console.log(`🔌 WebSocket closed for ${clientId}`)
-        unregister(clientId, socket)
-      }
-    })
-
-    // Handle WebSocket errors
-    socket.on("error", (err) => {
-      console.error("❌ WebSocket error:", err.message)
-    })
-
-    // Send initial connection confirmation
-    socket.send(JSON.stringify({
-      type: "connected",
-      message: "WebSocket connected. Send {clientId: 'your-id'} to register."
-    }))
+  // Clean up on close
+  ws.on("close", () => {
+    console.log(`🔌 WebSocket closing for ${clientId}`)
+    unregister(clientId, ws)
   })
+}
+
+function unregister(clientId, ws) {
+  const clientSockets = clients.get(clientId)
+  
+  if (clientSockets) {
+    clientSockets.delete(ws)
+    console.log(`🗑️ Removed socket for ${clientId}, remaining: ${clientSockets.size}`)
+    
+    // Remove entry if no more sockets
+    if (clientSockets.size === 0) {
+      clients.delete(clientId)
+      console.log(`🧹 Cleaned up ${clientId} from registry`)
+    }
+  }
+}
+
+function broadcast(clientId, payload) {
+  const clientSockets = clients.get(clientId)
+
+  console.log(`📢 BROADCAST to ${clientId}:`, {
+    hasEntry: !!clientSockets,
+    socketsCount: clientSockets?.size || 0,
+    payload: payload
+  })
+
+  if (!clientSockets || clientSockets.size === 0) {
+    console.warn(`⚠️ No active WebSockets for ${clientId}`)
+    return
+  }
+
+  const msg = JSON.stringify(payload)
+  let sentCount = 0
+  let failedCount = 0
+
+  for (const ws of clientSockets) {
+    try {
+      // Check readyState: 0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED
+      if (ws.readyState === 1) { // OPEN
+        ws.send(msg)
+        sentCount++
+        console.log(`✅ Sent to socket (readyState: ${ws.readyState})`)
+      } else {
+        console.warn(`⚠️ Socket not ready (readyState: ${ws.readyState})`)
+        failedCount++
+      }
+    } catch (err) {
+      console.error(`❌ Failed to send to socket:`, err.message)
+      failedCount++
+    }
+  }
+
+  console.log(`📊 Broadcast complete: ${sentCount} sent, ${failedCount} failed`)
+}
+
+function getStats() {
+  const stats = {}
+  for (const [clientId, sockets] of clients.entries()) {
+    stats[clientId] = sockets.size
+  }
+  return stats
+}
+
+module.exports = { 
+  register, 
+  unregister,
+  broadcast,
+  getStats
 }
