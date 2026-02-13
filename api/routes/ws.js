@@ -6,58 +6,49 @@ module.exports = async function (fastify) {
     // Extract the actual WebSocket from Fastify's wrapper
     const socket = connection.socket
     
-    let clientId = null
     let registered = false
 
     // Handle incoming messages from frontend
     socket.on("message", async (raw) => {
       try {
-        const data = JSON.parse(raw.toString())
+        const { clientId } = JSON.parse(raw.toString())
         
-        if (!data.clientId) {
-          socket.send(JSON.stringify({
-            type: "error",
-            message: "clientId is required"
-          }))
+        if (!clientId) {
+          console.warn("⚠️ Received message without clientId")
           return
         }
 
-        // Register socket on first message
+        // Register socket on first message (for broadcast updates)
         if (!registered) {
-          clientId = data.clientId
           register(clientId, socket)
           registered = true
           console.log(`✅ WebSocket registered for ${clientId}`)
         }
 
-        // Send current state
-        const state = await redis.hget("wa:clients:state", data.clientId)
+        // Get and send current state
+        const state = await redis.hget("wa:clients:state", clientId)
+        
         socket.send(JSON.stringify({
           type: "status",
-          clientId: data.clientId,
+          clientId,
           state: state || "NON_EXISTENT"
         }))
+        
+        console.log(`📤 Sent status: ${state || "NON_EXISTENT"} for ${clientId}`)
 
         // Send QR if available
-        const qr = await redis.get(`wa:qr:${data.clientId}`)
+        const qr = await redis.get(`wa:qr:${clientId}`)
         if (qr) {
           socket.send(JSON.stringify({
             type: "qr",
-            clientId: data.clientId,
+            clientId,
             qr
           }))
+          console.log(`📤 Sent QR for ${clientId}`)
         }
 
       } catch (err) {
         console.error("❌ WS message error:", err)
-        try {
-          socket.send(JSON.stringify({
-            type: "error",
-            message: err.message
-          }))
-        } catch (sendErr) {
-          console.error("❌ Failed to send error message:", sendErr)
-        }
       }
     })
 
@@ -65,15 +56,5 @@ module.exports = async function (fastify) {
     socket.on("error", (err) => {
       console.error("❌ WebSocket error:", err.message)
     })
-
-    // Send initial connection confirmation
-    try {
-      socket.send(JSON.stringify({
-        type: "connected",
-        message: "WebSocket connected. Send {clientId: 'your-id'} to register."
-      }))
-    } catch (err) {
-      console.error("❌ Failed to send initial message:", err)
-    }
   })
 }
