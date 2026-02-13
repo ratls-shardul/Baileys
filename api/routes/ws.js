@@ -5,10 +5,12 @@ module.exports = async function (fastify) {
   fastify.get("/ws", { websocket: true }, (socket, req) => {
     
     let registered = false
+    let clientId = null
 
     socket.on("message", async (raw) => {
       try {
-        const { clientId } = JSON.parse(raw.toString())
+        const data = JSON.parse(raw.toString())
+        clientId = data.clientId
         
         if (!clientId) {
           console.warn("⚠️ Received message without clientId")
@@ -46,8 +48,15 @@ module.exports = async function (fastify) {
       }
     })
 
+    socket.on("close", (code, reason) => {
+      console.log(`🔌 WebSocket closed for ${clientId || 'unknown'}`)
+      console.log(`   Close code: ${code}`)
+      console.log(`   Close reason: ${reason || 'none'}`)
+      console.log(`   Was registered: ${registered}`)
+    })
+
     socket.on("error", (err) => {
-      console.error("❌ WebSocket error:", err.message)
+      console.error(`❌ WebSocket error for ${clientId || 'unknown'}:`, err.message)
     })
     
     console.log("🔌 New WebSocket connection established")
