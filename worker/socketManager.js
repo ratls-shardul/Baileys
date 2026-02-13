@@ -48,7 +48,9 @@ async function initClient(clientId) {
     browser: ["Admissions - CRM", "Linux", "120.0.0"]
   })
 
-    sock.ev.on("creds.update", saveCreds)
+  sockets.set(clientId, sock)
+
+  sock.ev.on("creds.update", saveCreds)
 
   sock.ev.on("connection.update", async (update) => {
     console.log(`📡 [${clientId}] connection.update`, JSON.stringify(update))
