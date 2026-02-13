@@ -11,7 +11,7 @@ const start = async () => {
     fastify.register(require("./routes/ws"))
     fastify.register(require("./routes/clients"))
     fastify.register(require("./routes/messages"))
-    fastify.register(require("./routes/debug"))
+    fastify.register(require("./routes/debug-routes"))
 
     require("./redisSubscriber")
 
