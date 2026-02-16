@@ -13,7 +13,13 @@ const start = async () => {
     fastify.register(require("./routes/messages"))
     fastify.register(require("./routes/debug-routes"))
 
-    require("./redisSubscriber")
+    // require("./redisSubscriber")
+
+    const { startConsumer } = require("./streamConsumer")
+    startConsumer().catch(err => {
+      console.error("❌ Stream consumer failed to start:", err)
+      process.exit(1)
+    })
 
     await redis.ping()
     console.log("✅ Redis connected")

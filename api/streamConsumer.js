@@ -1,0 +1,259 @@
+const Redis = require("ioredis")
+const { broadcast } = require("./wsHub")
+
+const redis = new Redis({
+  host: process.env.REDIS_HOST || "redis",
+  port: 6379,
+  retryStrategy(times) {
+    const delay = Math.min(times * 100, 2000)
+    console.log(`🔁 Redis stream consumer retry #${times}, delay ${delay}ms`)
+    return delay
+  }
+})
+
+// Configuration
+const STREAM_KEY = 'wa:events:stream'
+const CONSUMER_GROUP = 'api-consumers'
+const CONSUMER_NAME = `api-${process.pid}-${Date.now()}`
+
+let isConsuming = false
+let consumerRunning = false
+
+/**
+ * Initialize the consumer group
+ * Creates the stream and consumer group if they don't exist
+ */
+async function initializeConsumerGroup() {
+  try {
+    console.log(`📡 Initializing consumer group: ${CONSUMER_GROUP}`)
+    
+    // Try to create consumer group
+    // $ means "start from new messages only"
+    // MKSTREAM creates the stream if it doesn't exist
+    await redis.xgroup(
+      'CREATE',
+      STREAM_KEY,
+      CONSUMER_GROUP,
+      '$',  // Start reading from new messages
+      'MKSTREAM'
+    )
+    
+    console.log(`✅ Consumer group '${CONSUMER_GROUP}' created successfully`)
+  } catch (err) {
+    if (err.message.includes('BUSYGROUP')) {
+      // Group already exists - this is fine
+      console.log(`✅ Consumer group '${CONSUMER_GROUP}' already exists`)
+    } else {
+      console.error(`❌ Failed to create consumer group:`, err)
+      throw err
+    }
+  }
+}
+
+/**
+ * Process a single message from the stream
+ */
+async function processMessage(messageId, fields) {
+  try {
+    // Fields is an array: ['data', '{"type":"status",...}']
+    const eventDataIndex = fields.indexOf('data')
+    if (eventDataIndex === -1 || eventDataIndex + 1 >= fields.length) {
+      console.error(`❌ Invalid message format, no 'data' field:`, fields)
+      return false
+    }
+    
+    const eventData = fields[eventDataIndex + 1]
+    const event = JSON.parse(eventData)
+    
+    console.log(`📨 STREAM MESSAGE [${messageId}]:`)
+    console.log(`   Type: ${event.type}`)
+    console.log(`   State: ${event.state || 'N/A'}`)
+    console.log(`   ClientId: ${event.clientId}`)
+    
+    // Broadcast to WebSocket clients
+    broadcast(event.clientId, event)
+    
+    return true
+  } catch (err) {
+    console.error(`❌ Failed to process message ${messageId}:`, err)
+    return false
+  }
+}
+
+/**
+ * Acknowledge a message (remove from pending)
+ */
+async function acknowledgeMessage(messageId) {
+  try {
+    const result = await redis.xack(STREAM_KEY, CONSUMER_GROUP, messageId)
+    if (result === 1) {
+      console.log(`✅ Message acknowledged: ${messageId}`)
+    } else {
+      console.warn(`⚠️ Message acknowledge returned ${result}: ${messageId}`)
+    }
+    return result
+  } catch (err) {
+    console.error(`❌ Failed to acknowledge message ${messageId}:`, err)
+    return 0
+  }
+}
+
+/**
+ * Process any pending messages that weren't acknowledged
+ * This handles messages that were delivered but not processed due to crashes
+ */
+async function processPendingMessages() {
+  try {
+    console.log(`🔍 Checking for pending messages...`)
+    
+    // Read pending messages for this consumer
+    // 0 means start from oldest pending
+    const pending = await redis.xreadgroup(
+      'GROUP', CONSUMER_GROUP, CONSUMER_NAME,
+      'COUNT', 10,
+      'STREAMS', STREAM_KEY, '0'
+    )
+    
+    if (!pending || pending.length === 0) {
+      console.log(`   No pending messages`)
+      return 0
+    }
+    
+    let processed = 0
+    for (const [stream, entries] of pending) {
+      for (const [messageId, fields] of entries) {
+        console.log(`📦 Processing pending message: ${messageId}`)
+        const success = await processMessage(messageId, fields)
+        if (success) {
+          await acknowledgeMessage(messageId)
+          processed++
+        }
+      }
+    }
+    
+    console.log(`✅ Processed ${processed} pending messages`)
+    return processed
+  } catch (err) {
+    console.error(`❌ Error processing pending messages:`, err)
+    return 0
+  }
+}
+
+/**
+ * Main consumer loop
+ * Continuously reads new messages from the stream
+ */
+async function startConsumer() {
+  if (consumerRunning) {
+    console.warn(`⚠️ Consumer already running`)
+    return
+  }
+  
+  consumerRunning = true
+  console.log(`🚀 Starting Redis Streams consumer: ${CONSUMER_NAME}`)
+  
+  try {
+    // Initialize consumer group
+    await initializeConsumerGroup()
+    
+    // Process any pending messages first
+    await processPendingMessages()
+    
+    console.log(`👂 Listening for new messages on stream: ${STREAM_KEY}`)
+    isConsuming = true
+    
+    // Main consumer loop
+    while (consumerRunning) {
+      try {
+        // Read new messages
+        // BLOCK 5000 = wait up to 5 seconds for new messages
+        // COUNT 10 = read up to 10 messages at once
+        // > means "only new undelivered messages"
+        const messages = await redis.xreadgroup(
+          'GROUP', CONSUMER_GROUP, CONSUMER_NAME,
+          'BLOCK', 5000,  // Block for 5 seconds if no messages
+          'COUNT', 10,     // Read up to 10 messages
+          'STREAMS', STREAM_KEY, '>'
+        )
+        
+        if (!messages || messages.length === 0) {
+          // No messages, loop will continue after timeout
+          continue
+        }
+        
+        // Process all received messages
+        for (const [stream, entries] of messages) {
+          console.log(`📬 Received ${entries.length} new messages`)
+          
+          for (const [messageId, fields] of entries) {
+            const success = await processMessage(messageId, fields)
+            
+            if (success) {
+              await acknowledgeMessage(messageId)
+            } else {
+              console.error(`⚠️ Message processing failed, will retry: ${messageId}`)
+              // Message stays in pending, will be reprocessed later
+            }
+          }
+        }
+        
+      } catch (err) {
+        if (err.message && err.message.includes('NOGROUP')) {
+          console.error(`❌ Consumer group disappeared, reinitializing...`)
+          await initializeConsumerGroup()
+        } else {
+          console.error(`❌ Error in consumer loop:`, err)
+        }
+        
+        // Wait before retrying
+        await new Promise(resolve => setTimeout(resolve, 1000))
+      }
+    }
+    
+  } catch (err) {
+    console.error(`❌ Stream consumer crashed:`, err)
+    consumerRunning = false
+    isConsuming = false
+    throw err
+  }
+}
+
+/**
+ * Stop the consumer gracefully
+ */
+async function stopConsumer() {
+  console.log(`🛑 Stopping consumer: ${CONSUMER_NAME}`)
+  consumerRunning = false
+  isConsuming = false
+  
+  try {
+    await redis.quit()
+    console.log(`✅ Consumer stopped cleanly`)
+  } catch (err) {
+    console.error(`❌ Error stopping consumer:`, err)
+  }
+}
+
+/**
+ * Get consumer status
+ */
+function getStatus() {
+  return {
+    isConsuming,
+    consumerRunning,
+    consumerName: CONSUMER_NAME,
+    consumerGroup: CONSUMER_GROUP,
+    streamKey: STREAM_KEY
+  }
+}
+
+// Handle graceful shutdown
+process.on('SIGTERM', stopConsumer)
+process.on('SIGINT', stopConsumer)
+
+module.exports = {
+  startConsumer,
+  stopConsumer,
+  getStatus,
+  isConsuming: () => isConsuming
+}
