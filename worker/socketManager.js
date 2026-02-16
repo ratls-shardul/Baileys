@@ -27,17 +27,27 @@ async function publishEvent(event) {
   console.log("📤 PUBLISHING EVENT to stream:", event)
   
   try {
-    // Add to Redis Stream (persisted, guaranteed delivery)
-    const messageId = await redis.xadd(
+    // Add timeout to prevent hanging
+    const publishPromise = redis.xadd(
       'wa:events:stream',  // Stream key
       '*',                 // Auto-generate ID (timestamp-based)
       'data', JSON.stringify(event)  // Store event as JSON
     )
     
+    // Race between publish and 3-second timeout
+    const messageId = await Promise.race([
+      publishPromise,
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Publish timeout after 3s')), 3000)
+      )
+    ])
+    
     console.log(`✅ Event published to stream, Message ID: ${messageId}`)
     return messageId
   } catch (err) {
-    console.error("❌ Failed to publish event to stream:", err)
+    console.error("❌ Failed to publish event to stream:", err.message)
+    console.error("   Event was:", JSON.stringify(event))
+    // Re-throw to let caller handle
     throw err
   }
 }
@@ -141,11 +151,17 @@ async function initClient(clientId) {
         if (statusCode === DisconnectReason.loggedOut || statusCode === 401) {
           await setClientState(clientId, STATES.LOGGED_OUT)
 
-          await publishEvent({
-            type: "status",
-            clientId,
-            state: "LOGGED_OUT"
-          })
+          // Publish LOGGED_OUT event and WAIT for it to complete
+          try {
+            await publishEvent({
+              type: "status",
+              clientId,
+              state: "LOGGED_OUT"
+            })
+            console.log(`✅ LOGGED_OUT event successfully published for ${clientId}`)
+          } catch (publishErr) {
+            console.error(`❌ Failed to publish LOGGED_OUT for ${clientId}:`, publishErr.message)
+          }
 
           const oldSock = sockets.get(clientId)
 
@@ -158,13 +174,12 @@ async function initClient(clientId) {
           clearSession(clientId)
 
           console.log(`📲 ${clientId} requires new QR`)
-          // bootingClients.delete(clientId)
 
-          // 🔥 Auto re-init to generate new QR
-          setTimeout(() => {
+          // Wait a bit longer to ensure publish has propagated
+          setTimeout(async () => {
             console.log(`🔄 Reinitializing ${clientId} for new QR`)
-            initClient(clientId)
-          }, 1000)  // Reduced from 5000 to 1000ms
+            await initClient(clientId)
+          }, 1500)  // Increased from 1000 to 1500ms
 
           return
         }
@@ -232,7 +247,6 @@ async function startSenderLoop(clientId) {
 
       await sendMessageWithMedia(sock, jid, payload)
 
-      // 🎲 RANDOM DELAY AFTER SEND
       await sleep(randomBetween(2000, 5000))
     } catch (err) {
       console.error(`❌ Sender loop error for ${clientId}`, err)

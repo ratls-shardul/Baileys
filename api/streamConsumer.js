@@ -166,18 +166,22 @@ async function startConsumer() {
     while (consumerRunning) {
       try {
         // Read new messages
-        // BLOCK 5000 = wait up to 5 seconds for new messages
+        // BLOCK 1000 = wait up to 1 second for new messages (reduced from 5000)
         // COUNT 10 = read up to 10 messages at once
         // > means "only new undelivered messages"
         const messages = await redis.xreadgroup(
           'GROUP', CONSUMER_GROUP, CONSUMER_NAME,
-          'BLOCK', 5000,  // Block for 5 seconds if no messages
+          'BLOCK', 1000,  // Block for 1 second (faster response)
           'COUNT', 10,     // Read up to 10 messages
           'STREAMS', STREAM_KEY, '>'
         )
         
         if (!messages || messages.length === 0) {
           // No messages, loop will continue after timeout
+          // Log heartbeat every 30 seconds
+          if (Date.now() % 30000 < 1000) {
+            console.log(`💓 Stream consumer heartbeat - waiting for messages...`)
+          }
           continue
         }
         
@@ -201,12 +205,18 @@ async function startConsumer() {
         if (err.message && err.message.includes('NOGROUP')) {
           console.error(`❌ Consumer group disappeared, reinitializing...`)
           await initializeConsumerGroup()
+        } else if (err.message && err.message.includes('timeout')) {
+          console.warn(`⚠️ Redis timeout, continuing...`)
+        } else if (err.message && err.message.includes('ECONNREFUSED')) {
+          console.error(`❌ Redis connection refused, retrying in 2s...`)
+          await new Promise(resolve => setTimeout(resolve, 2000))
         } else {
-          console.error(`❌ Error in consumer loop:`, err)
+          console.error(`❌ Error in consumer loop:`, err.message)
+          console.error(`   Stack:`, err.stack)
         }
         
         // Wait before retrying
-        await new Promise(resolve => setTimeout(resolve, 1000))
+        await new Promise(resolve => setTimeout(resolve, 500))
       }
     }
     
