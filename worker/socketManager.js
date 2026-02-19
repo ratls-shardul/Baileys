@@ -7,7 +7,7 @@ const { clearSession } = require("./sessionUtils")
 const { STATES, setClientState } = require("./clientState")
 const Redis = require("ioredis")
 const { sendMessageWithMedia } = require("./mediaSender")
-const { randomDelay } = require("./utils/delay")/media/dabablu/Data/RATLS/Baileys/worker/socketManager.js
+const { randomDelay } = require("./utils/delay")
 
 // Separate Redis connections to prevent blocking
 const redis = new Redis({
