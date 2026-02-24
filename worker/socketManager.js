@@ -54,6 +54,7 @@ const connectedClients = new Set()
 const senderLoops = new Set()
 const senderRedisClients = new Map()
 const initializingClients = new Set()
+const reconnectAttempts = new Map()
 
 
 // let isBooting = true
@@ -167,6 +168,7 @@ async function initClient(clientId) {
 
       if (connection === "open") {
         console.log(`🟢 ${clientId} connection opened`)
+        reconnectAttempts.delete(clientId)
 
         await setClientState(clientId, STATES.CONNECTED)
 
@@ -206,6 +208,7 @@ async function initClient(clientId) {
 
         // 🚪 Logged out / Unauthorized
         if (statusCode === DisconnectReason.loggedOut || statusCode === 401) {
+          reconnectAttempts.delete(clientId)
           await setClientState(clientId, STATES.LOGGED_OUT)
 
           // Publish LOGGED_OUT event (won't throw on failure)
@@ -242,7 +245,8 @@ async function initClient(clientId) {
           return
         }
 
-        // 🌐 Disconnected: force full session reset and reinit for fresh QR.
+        // 🌐 Disconnected: retry with backoff.
+        // For 405 connection failures, do NOT clear session each loop.
         await setClientState(clientId, STATES.DISCONNECTED)
         await publishEvent({
           type: "status",
@@ -257,12 +261,31 @@ async function initClient(clientId) {
         }
 
         sockets.delete(clientId)
-        clearSession(clientId)
+
+        const attempt = (reconnectAttempts.get(clientId) || 0) + 1
+        reconnectAttempts.set(clientId, attempt)
+
+        // Cap auto-retries to avoid infinite tight loops.
+        if (attempt > 8) {
+          console.error(`🛑 ${clientId} exceeded reconnect attempts (${attempt - 1}), waiting for manual reconnect`)
+          return
+        }
+
+        // Only force fresh session for non-405 disconnects.
+        if (statusCode !== 405) {
+          clearSession(clientId)
+        } else {
+          console.warn(`⚠️ ${clientId} got 405; preserving session to avoid QR/reset loop`)
+        }
+
+        const delayMs = statusCode === 405
+          ? Math.min(15000 * attempt, 120000)
+          : Math.min(3000 * attempt, 30000)
 
         setTimeout(() => {
-          console.log(`🔄 Reinitializing ${clientId} after disconnect for fresh QR...`)
+          console.log(`🔄 Reinitializing ${clientId} (attempt ${attempt}, delay ${delayMs}ms)...`)
           initClient(clientId)
-        }, 1500)
+        }, delayMs)
       }
       } catch (connUpdateErr) {
         console.error(`❌ Error in connection.update handler for ${clientId}:`, connUpdateErr.message)
