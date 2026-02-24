@@ -1,5 +1,4 @@
 const fs = require("fs")
-const path = require("path")
 
 function clearSession(clientId) {
   const sessionPath = `/sessions/${clientId}`

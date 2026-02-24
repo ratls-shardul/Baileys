@@ -1,6 +1,5 @@
 const Redis = require("ioredis")
 const { initClient, startSenderLoop } = require("./socketManager")
-const { sendMessageWithMedia } = require("./mediaSender")
 
 const redis = new Redis({
   host: "redis",

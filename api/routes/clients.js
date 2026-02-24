@@ -25,9 +25,9 @@ module.exports = async function (fastify) {
     const { clientId } = req.params
     const state = await redis.hget(STATE_KEY, clientId)
 
-    if (state !== "LOGGED_OUT") {
+    if (state !== "LOGGED_OUT" && state !== "DISCONNECTED") {
       return res.code(400).send({
-        error: "Client is not logged out"
+        error: "Client must be LOGGED_OUT or DISCONNECTED"
       })
     }
 

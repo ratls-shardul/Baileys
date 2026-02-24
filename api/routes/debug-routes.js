@@ -23,15 +23,19 @@ module.exports = async function (fastify) {
   // Debug endpoint to trigger a test broadcast
   fastify.post("/debug/test-broadcast/:clientId", async (req, res) => {
     const { clientId } = req.params
-    
-    await redis.publish(
-      "wa:events",
-      JSON.stringify({
-        type: "test",
-        clientId,
-        message: "This is a test broadcast",
-        timestamp: new Date().toISOString()
-      })
+
+    const event = {
+      type: "test",
+      clientId,
+      message: "This is a test broadcast",
+      timestamp: new Date().toISOString()
+    }
+
+    await redis.xadd(
+      "wa:events:stream",
+      "*",
+      "data",
+      JSON.stringify(event)
     )
 
     return { 

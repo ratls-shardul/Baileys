@@ -1,6 +1,5 @@
 global.crypto = require("crypto").webcrypto
 
-const { initClient } = require("./socketManager")
 const { startCommandListener } = require("./commandListener")
 
 async function start() {

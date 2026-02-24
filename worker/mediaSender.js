@@ -1,5 +1,3 @@
-const axios = require("axios")
-
 async function sendMessageWithMedia(sock, jid, payload) {
   const { text, files = [] } = payload
 

@@ -1,13 +1,11 @@
-const { makeWASocket, useMultiFileAuthState, DisconnectReason } =
+const { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } =
   require("@whiskeysockets/baileys")
 const Pino = require("pino")
-const qrcode = require("qrcode-terminal")
 
 const { clearSession } = require("./sessionUtils")
 const { STATES, setClientState } = require("./clientState")
 const Redis = require("ioredis")
 const { sendMessageWithMedia } = require("./mediaSender")
-const { randomDelay } = require("./utils/delay")
 
 // Separate Redis connections to prevent blocking
 const redis = new Redis({
@@ -128,13 +126,16 @@ async function initClient(clientId) {
 
     const { state, saveCreds } = await useMultiFileAuthState(sessionPath)
 
+    const { version, isLatest } = await fetchLatestBaileysVersion()
+    console.log(`📦 Baileys WA version for ${clientId}: ${version.join(".")} (isLatest=${isLatest})`)
+
     const sock = makeWASocket({
       auth: state,
       // logger: Pino({ level: "debug" }),
       logger: Pino({ level: "silent" }).child({level: "silent" }),
       printQRInTerminal: false,
       markOnlineOnConnect: false,
-      browser: ["Admissions - CRM", "Linux", "120.0.0"]
+      version
     })
 
     sockets.set(clientId, sock)
