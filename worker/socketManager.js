@@ -52,6 +52,7 @@ async function ensurePublishConnection() {
 const sockets = new Map()
 const connectedClients = new Set()
 const senderLoops = new Set()
+const senderRedisClients = new Map()
 const initializingClients = new Set()
 
 
@@ -284,17 +285,30 @@ async function startSenderLoop(clientId) {
   senderLoops.add(clientId)
   console.log(`▶️ Sender loop started for ${clientId}`)
 
+  // Dedicated Redis connection per sender loop.
+  // BRPOP is a blocking command and must not share one connection across client loops.
+  const queueRedis = new Redis({
+    host: "redis",
+    port: 6379,
+    enableOfflineQueue: true,
+    maxRetriesPerRequest: null
+  })
+  senderRedisClients.set(clientId, queueRedis)
+  queueRedis.on("error", (err) => {
+    console.error(`❌ Queue Redis error for ${clientId}:`, err.message)
+  })
+
   while (true) {
     try {
       // 🔑 BLOCK until a message arrives
-      const res = await redis.brpop(`wa:pending:${clientId}`, 0)
+      const res = await queueRedis.brpop(`wa:pending:${clientId}`, 0)
       const raw = res[1]
       const payload = JSON.parse(raw)
 
       const sock = sockets.get(clientId)
       if (!sock) {
         console.log(`⏸️ ${clientId} socket missing, re-queueing`)
-        await redis.lpush(`wa:pending:${clientId}`, raw)
+        await queueRedis.lpush(`wa:pending:${clientId}`, raw)
         await sleep(3000)
         continue
       }
