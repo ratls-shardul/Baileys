@@ -13,9 +13,15 @@ async function sendMessageWithMedia(sock, jid, payload) {
   if (files.length === 1) {
     const m = files[0]
 
-    const message = buildMediaMessage(m, text)
+    const canCaption = canUseCaption(m.mimeType)
+    const message = buildMediaMessage(m, canCaption ? text : undefined)
     const res = await sock.sendMessage(jid, message)
     console.log("response from sendMessage single media", res)
+
+    if (text && !canCaption) {
+      const resText = await sock.sendMessage(jid, { text })
+      console.log("response from sendMessage text after media", resText)
+    }
     return
   }
 
@@ -30,6 +36,10 @@ async function sendMessageWithMedia(sock, jid, payload) {
     const res = await sock.sendMessage(jid, { text })
     console.log("response from sendMessage text only", res)
   }
+}
+
+function canUseCaption(mimeType = "") {
+  return mimeType.startsWith("image/") || mimeType.startsWith("video/")
 }
 
 function buildMediaMessage(file, caption) {

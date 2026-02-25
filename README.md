@@ -198,20 +198,31 @@ Observed event types:
    - publishes LOGGED_OUT status event.
    - removes listeners, ends socket, deletes from map.
    - clears `/sessions/<clientId>` directory.
-   - does **not** auto-reinitialize in current `socketManager.js` (reinit code is commented).
-3. Reconnect must be requested through API endpoint:
-   - `POST /clients/:clientId/reconnect` (only allowed if state is `LOGGED_OUT`).
+   - auto-reinitializes after a short delay so a new QR can be generated for the same client.
 
 ### 5.4 Transient disconnect flow
 
 1. Baileys closes for other reasons.
 2. Worker:
-   - sets state `DISCONNECTED`.
-   - publishes DISCONNECTED event.
-   - removes socket from map.
-   - retries `initClient(clientId)` after 5 seconds.
+   - handles disconnect by status code:
+     - `515` immediately after `isNewLogin` is treated as expected "restart required":
+       - state published as `CONNECTING` (not `DISCONNECTED`)
+       - socket is restarted without clearing session
+     - `405` connection failures:
+       - publishes `DISCONNECTED`
+       - preserves session
+       - retries with backoff and capped attempts
+     - other non-logout disconnects:
+       - publishes `DISCONNECTED`
+       - clears session and retries with backoff
 
-### 5.5 Outbound message flow
+### 5.5 Reconnect endpoint behavior
+
+- `POST /clients/:clientId/reconnect` is allowed when current state is:
+  - `LOGGED_OUT`
+  - `DISCONNECTED`
+
+### 5.6 Outbound message flow
 
 1. Client calls `POST /messages/send` with:
    - `clientId`, `phoneNumber`, optional `text`, optional `files[]`.
@@ -242,7 +253,7 @@ Observed event types:
   - Returns `{ ok: true, clientId }`.
 
 - `POST /clients/:clientId/reconnect`
-  - Only allowed when state is `LOGGED_OUT`.
+  - Allowed when state is `LOGGED_OUT` or `DISCONNECTED`.
   - Requeues `ADD_CLIENT`.
 
 - `GET /clients/:clientId/status`
@@ -263,7 +274,7 @@ Observed event types:
   - At minimum: `{ "clientId": "..." }`
   - Ping form: `{ "clientId": "...", "type": "ping" }`
 - Server behavior:
-  - Registers socket to `clientId` on first non-ping message.
+  - Registers socket to `clientId` on first message containing `clientId` (including ping).
   - Immediately sends current status event.
   - Sends QR event if `wa:qr:<clientId>` exists.
   - Replies to ping with `{ "type": "pong", "timestamp": <ms> }`.
@@ -275,6 +286,8 @@ Observed event types:
 - `POST /debug/test-broadcast/:clientId`
 - `GET /debug/qr/:clientId`
 - `GET /debug/pending/:clientId`
+
+`/debug/test-broadcast/:clientId` now writes test events into `wa:events:stream` using `XADD`.
 
 ---
 
@@ -320,12 +333,16 @@ This is in-memory only, so scaling API replicas requires shared pub/sub/fanout s
 - `sockets: Map<clientId, sock>`
 - `connectedClients: Set<clientId>`
 - `senderLoops: Set<clientId>`
+- `senderRedisClients: Map<clientId, RedisConnection>`
 - `initializingClients: Set<clientId>`
+- `reconnectAttempts: Map<clientId, number>`
+- `recentNewLoginAt: Map<clientId, timestamp>`
 
 ### Redis connections
 
 - `redis`: general commands + queue consumption.
 - `redisPub`: dedicated publisher connection for stream writes.
+- per-client sender-loop Redis connections for blocking queue reads.
 - `ensurePublishConnection()` recreates publisher connection if ping fails.
 
 ### Publish strategy
@@ -337,9 +354,17 @@ This is in-memory only, so scaling API replicas requires shared pub/sub/fanout s
 ### Sender loop behavior
 
 - Single loop per client ID (guarded by `senderLoops` set).
-- Infinite BRPOP loop on `wa:pending:<clientId>`.
+- Infinite BRPOP loop on `wa:pending:<clientId>` with dedicated Redis connection per client loop.
 - Requeue behavior if socket missing.
 - Random delay between sends to avoid burst sending.
+
+### Baileys handshake/device behavior
+
+- Uses `fetchLatestBaileysVersion()` on each client init and passes `version` to `makeWASocket`.
+- Uses configurable browser/device identity:
+  - `WA_DEVICE_NAME` (default: `Admissions - CRM`)
+  - `WA_DEVICE_PLATFORM` (default: `Linux`)
+  - `WA_DEVICE_VERSION` (default: `120.0.0`)
 
 ### Media send behavior (`worker/mediaSender.js`)
 
@@ -363,6 +388,12 @@ This is in-memory only, so scaling API replicas requires shared pub/sub/fanout s
 - `worker` (build `./worker`, mounts `./sessions:/sessions`)
 - `api` (build `./api`, exposes `3000`)
 
+Worker environment in compose:
+
+- `WA_DEVICE_NAME=Admissions - CRM`
+- `WA_DEVICE_PLATFORM=Linux`
+- `WA_DEVICE_VERSION=120.0.0`
+
 ### Boot sequence
 
 1. Redis starts, healthcheck passes.
@@ -383,7 +414,7 @@ Typical transitions:
 - `CREATED -> CONNECTING -> QR_REQUIRED -> CONNECTED`
 - `CONNECTED -> DISCONNECTED -> CONNECTING ...` (transient network issues)
 - `CONNECTED -> LOGGED_OUT` (session invalidation / explicit logout)
-- `LOGGED_OUT -> CONNECTING` via `/clients/:clientId/reconnect`
+- `LOGGED_OUT -> CONNECTING` (auto-reinit for fresh QR; reconnect endpoint can also trigger)
 
 The state is stored centrally in Redis hash `wa:clients:state`.
 
@@ -405,25 +436,25 @@ No metrics backend, tracing, structured centralized logging, or alerting is incl
 
 1. Mixed legacy vs current event path:
    - Current path: **Redis Streams** (`wa:events:stream`).
-   - Legacy path: pub/sub channel `wa:events` still referenced by debug route and `old-socketManager.js`.
+   - Legacy path still exists in `old-socketManager.js` and `api/redisSubscriber.js`.
 
-2. `POST /debug/test-broadcast/:clientId` publishes to `wa:events` (pub/sub), but pub/sub subscriber is disabled by default, so this debug endpoint does not hit normal stream flow unless subscriber is re-enabled.
+2. `commandListener.js` has `SEND_MESSAGE` handling on `wa:commands`, but current `/messages/send` writes directly to `wa:pending:<clientId>`. That command type is effectively unused from API path.
 
-3. `commandListener.js` has `SEND_MESSAGE` handling on `wa:commands`, but current `/messages/send` writes directly to `wa:pending:<clientId>`. That command type is effectively unused from API path.
+3. Recipient normalization hardcodes India prefix (`91`) for non-JID phone numbers.
 
-4. Recipient normalization hardcodes India prefix (`91`) for non-JID phone numbers.
+4. No auth on API routes; CORS currently allows any origin (`origin: true`).
 
-5. No auth on API routes; CORS currently allows any origin (`origin: true`).
+5. Redis persistence is disabled in compose config; restart can lose state/queues/events.
 
-6. Redis persistence is disabled in compose config; restart can lose state/queues/events.
+6. WebSocket registration still requires at least one client message containing `clientId` after connect.
 
-7. WebSocket registration requires client to send at least one message containing `clientId`.
+7. Stream consumer pending recovery uses `XREADGROUP ... 0` for this consumer; cross-consumer stale pending claim/reassignment logic (`XAUTOCLAIM`) is not implemented.
 
-8. `worker/socketManager.js` imports `qrcode-terminal` and `randomDelay` but does not use them.
+8. Outbound queue currently pops message before send; failed send attempts can lose jobs (no DLQ/retry counter yet).
 
-9. `worker/mediaSender.js` imports `axios` but does not use it.
+9. Baileys dependency is pinned to `7.0.0-rc.9`; monitor for protocol drift and upgrade needs.
 
-10. Stream consumer pending recovery uses `XREADGROUP ... 0` for this consumer; cross-consumer stale pending claim/reassignment logic (`XAUTOCLAIM`) is not implemented.
+10. `old-socketManager.js` is legacy and can cause confusion if accidentally referenced.
 
 ---
 
@@ -523,3 +554,22 @@ If continuing development, read in this order:
 6. `worker/mediaSender.js`
 
 These files define nearly all runtime behavior and integration boundaries.
+
+---
+
+## 17) Current Behavior Snapshot (Feb 2026)
+
+- Event pipeline is Redis Streams based (`wa:events:stream`) end-to-end.
+- Worker auto-retries reconnects with backoff and attempt cap.
+- `405` disconnects are treated as connection failures with session preservation.
+- `515` right after `isNewLogin` is treated as expected restart (no session reset, no forced DISCONNECTED broadcast).
+- `LOGGED_OUT`/`401` triggers session clear and automatic QR regeneration flow.
+- WebSocket registration includes ping messages (first message with `clientId` registers socket).
+- Reconnect API supports both `LOGGED_OUT` and `DISCONNECTED`.
+- Device label is configurable and defaults to `Admissions - CRM`.
+
+Recommended frontend WS pattern:
+
+1. On every WS connect, immediately send `{ "clientId": "<id>" }`.
+2. Keep sending periodic `{ "clientId": "<id>", "type": "ping" }`.
+3. Treat `CONNECTING`, `QR_REQUIRED`, `CONNECTED`, `DISCONNECTED`, `LOGGED_OUT` as stream states.
