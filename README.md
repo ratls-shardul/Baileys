@@ -572,7 +572,7 @@ Recommended frontend WS pattern:
 
 1. On every WS connect, immediately send `{ "clientId": "<id>" }`.
 2. Keep sending periodic `{ "clientId": "<id>", "type": "ping" }`.
-3. Treat `CONNECTING`, `QR_REQUIRED`, `CONNECTED`, `DISCONNECTED`, `LOGGED_OUT` as stream states.
+3. Treat `CONNECTING`, `QR_REQUIRED`, `CONNECTED`, `DISCONNECTED`, `LOGGED_OUT`, `STOPPED` as stream states.
 
 ---
 
@@ -603,6 +603,7 @@ In `docker-compose.yaml`, defaults are set to:
 - `LOG_LEVEL=warn` (less terminal noise)
 - `API_LOG_LEVEL=warn`
 - `CLIENT_LOG_LEVEL=info`
+- `SCRUB_SIGNAL_LOGS=true` (drops any accidental Signal/ratchet session dumps)
 
 ### 18.2 Per-client log files (worker)
 
@@ -661,3 +662,83 @@ curl -X POST http://localhost:3000/clients/<clientId>/restart \
   -H 'content-type: application/json' \
   -d '{"resetSession": true}'
 ```
+
+### 18.4 Stop a single client (no auto-reconnect)
+
+New API endpoint:
+
+`POST /clients/:clientId/stop`
+
+Optional body:
+
+```json
+{ "resetSession": true }
+```
+
+Behavior:
+
+- Stops the client socket and prevents auto-reconnect.
+- Sets state to `STOPPED`.
+- If `resetSession=true`, the session folder is cleared.
+
+Example (stop without session reset):
+
+```bash
+curl -X POST http://localhost:3000/clients/<clientId>/stop \
+  -H 'content-type: application/json' \
+  -d '{"resetSession": false}'
+```
+
+Example (stop and clear session):
+
+```bash
+curl -X POST http://localhost:3000/clients/<clientId>/stop \
+  -H 'content-type: application/json' \
+  -d '{"resetSession": true}'
+```
+
+### 18.5 Active sockets count
+
+New API endpoint:
+
+`GET /debug/active-clients`
+
+Returns:
+
+- `active`: list of clientIds with initialized sockets in the worker
+- `count`: number of active sockets
+
+---
+
+## 19) Dashboard (React + Vite)
+
+A separate dashboard container provides a UI to manage clients, sockets, logs, restarts, and stops.
+
+### 19.1 Run
+
+From `docker-compose.yaml`:
+
+- Service name: `dashboard`
+- Port: `8080`
+- Basic auth via env:
+  - `DASH_USER`
+  - `DASH_PASS`
+
+Open:
+
+`http://<host>:8080`
+
+### 19.2 API base
+
+In the UI, set the API base to your Fastify API (default shown):
+
+`http://<host>:3000`
+
+### 19.3 Logs (stdout)
+
+The dashboard reads stdout logs via Docker socket:
+
+- Mount: `/var/run/docker.sock:/var/run/docker.sock`
+- Endpoint: `GET /api/logs?service=worker&tail=200`
+
+Services supported: `worker`, `api`, `redis`, `dashboard`.

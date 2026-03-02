@@ -20,6 +20,16 @@ module.exports = async function (fastify) {
     }
   })
 
+  // Debug endpoint to check active sockets (worker-initialized clients)
+  fastify.get("/debug/active-clients", async () => {
+    const active = await redis.smembers("wa:clients:active")
+    return {
+      active,
+      count: active.length,
+      timestamp: new Date().toISOString()
+    }
+  })
+
   // Debug endpoint to trigger a test broadcast
   fastify.post("/debug/test-broadcast/:clientId", async (req, res) => {
     const { clientId } = req.params

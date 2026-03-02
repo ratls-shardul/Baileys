@@ -14,7 +14,8 @@ const STATES = {
   QR_REQUIRED: "QR_REQUIRED",
   CONNECTED: "CONNECTED",
   DISCONNECTED: "DISCONNECTED",
-  LOGGED_OUT: "LOGGED_OUT"
+  LOGGED_OUT: "LOGGED_OUT",
+  STOPPED: "STOPPED"
 }
 
 async function setClientState(clientId, state) {

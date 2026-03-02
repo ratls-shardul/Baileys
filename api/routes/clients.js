@@ -25,9 +25,9 @@ module.exports = async function (fastify) {
     const { clientId } = req.params
     const state = await redis.hget(STATE_KEY, clientId)
 
-    if (state !== "LOGGED_OUT" && state !== "DISCONNECTED") {
+    if (state !== "LOGGED_OUT" && state !== "DISCONNECTED" && state !== "STOPPED") {
       return res.code(400).send({
-        error: "Client must be LOGGED_OUT or DISCONNECTED"
+        error: "Client must be LOGGED_OUT, DISCONNECTED, or STOPPED"
       })
     }
 
@@ -46,6 +46,18 @@ module.exports = async function (fastify) {
     await redis.lpush(
       "wa:commands",
       JSON.stringify({ type: "RESTART_CLIENT", clientId, resetSession })
+    )
+
+    return { ok: true, clientId, resetSession }
+  })
+
+  fastify.post("/clients/:clientId/stop", async (req, res) => {
+    const { clientId } = req.params
+    const resetSession = Boolean(req.body && req.body.resetSession)
+
+    await redis.lpush(
+      "wa:commands",
+      JSON.stringify({ type: "STOP_CLIENT", clientId, resetSession })
     )
 
     return { ok: true, clientId, resetSession }

@@ -55,10 +55,24 @@ async function ensurePublishConnection() {
 const sockets = new Map()
 const connectedClients = new Set()
 const senderLoops = new Set()
+const senderStopFlags = new Map()
 const senderRedisClients = new Map()
 const initializingClients = new Set()
 const reconnectAttempts = new Map()
 const recentNewLoginAt = new Map()
+const stoppedClients = new Set()
+
+async function markActive(clientId) {
+  try {
+    await redis.sadd("wa:clients:active", clientId)
+  } catch {}
+}
+
+async function markInactive(clientId) {
+  try {
+    await redis.srem("wa:clients:active", clientId)
+  } catch {}
+}
 
 
 // let isBooting = true
@@ -117,6 +131,7 @@ async function initClient(clientId) {
     return
   }
 
+  stoppedClients.delete(clientId)
   initializingClients.add(clientId)
 
   try{
@@ -146,6 +161,7 @@ async function initClient(clientId) {
     })
 
     sockets.set(clientId, sock)
+    await markActive(clientId)
 
     sock.ev.on("creds.update", saveCreds)
 
@@ -208,6 +224,26 @@ async function initClient(clientId) {
 
       if (connection === "close") {
         connectedClients.delete(clientId)
+
+        if (stoppedClients.has(clientId)) {
+          await setClientState(clientId, STATES.STOPPED)
+          await publishEvent({
+            type: "status",
+            clientId,
+            state: "STOPPED"
+          })
+
+          const oldSock = sockets.get(clientId)
+          if (oldSock) {
+            oldSock.ev.removeAllListeners()
+            try { oldSock.end() } catch {}
+          }
+
+          sockets.delete(clientId)
+          await markInactive(clientId)
+          await markInactive(clientId)
+          return
+        }
         const statusCode =
           lastDisconnect?.error?.output?.statusCode ??
           lastDisconnect?.error?.output?.payload?.statusCode
@@ -248,6 +284,7 @@ async function initClient(clientId) {
           }
 
           sockets.delete(clientId)
+          await markInactive(clientId)
           clearSession(clientId)
 
           clientLog(clientId, "info", "📲 requires new QR")
@@ -301,6 +338,7 @@ async function initClient(clientId) {
         }
 
         sockets.delete(clientId)
+        await markInactive(clientId)
 
         const attempt = (reconnectAttempts.get(clientId) || 0) + 1
         reconnectAttempts.set(clientId, attempt)
@@ -353,6 +391,7 @@ async function startSenderLoop(clientId) {
   if (senderLoops.has(clientId)) return
 
   senderLoops.add(clientId)
+  senderStopFlags.set(clientId, false)
   clientLog(clientId, "info", "▶️ Sender loop started")
 
   // Dedicated Redis connection per sender loop.
@@ -370,6 +409,9 @@ async function startSenderLoop(clientId) {
 
   while (true) {
     try {
+      if (senderStopFlags.get(clientId)) {
+        break
+      }
       // 🔑 BLOCK until a message arrives
       const res = await queueRedis.brpop(`wa:pending:${clientId}`, 0)
       const raw = res[1]
@@ -396,10 +438,17 @@ async function startSenderLoop(clientId) {
       // 🎲 RANDOM DELAY AFTER SEND
       await sleep(randomBetween(2000, 5000))
     } catch (err) {
+      if (senderStopFlags.get(clientId)) {
+        break
+      }
       clientLog(clientId, "error", `❌ Sender loop error: ${err && err.message ? err.message : err}`)
       await sleep(5000)
     }
   }
+
+  senderLoops.delete(clientId)
+  senderStopFlags.delete(clientId)
+  senderRedisClients.delete(clientId)
 }
 
 function getClient(clientId) {
@@ -410,10 +459,20 @@ function listClients() {
   return [...sockets.keys()]
 }
 
+function stopSenderLoop(clientId) {
+  senderStopFlags.set(clientId, true)
+  const queueRedis = senderRedisClients.get(clientId)
+  if (queueRedis) {
+    try { queueRedis.disconnect() } catch {}
+  }
+}
+
 async function restartClient(clientId, { resetSession = false } = {}) {
   connectedClients.delete(clientId)
   reconnectAttempts.delete(clientId)
   recentNewLoginAt.delete(clientId)
+  stoppedClients.delete(clientId)
+  stopSenderLoop(clientId)
 
   const oldSock = sockets.get(clientId)
   if (oldSock) {
@@ -422,6 +481,7 @@ async function restartClient(clientId, { resetSession = false } = {}) {
   }
 
   sockets.delete(clientId)
+  await markInactive(clientId)
 
   if (resetSession) {
     clearSession(clientId)
@@ -438,10 +498,41 @@ async function restartClient(clientId, { resetSession = false } = {}) {
   await initClient(clientId)
 }
 
+async function stopClient(clientId, { resetSession = false } = {}) {
+  stoppedClients.add(clientId)
+  connectedClients.delete(clientId)
+  reconnectAttempts.delete(clientId)
+  recentNewLoginAt.delete(clientId)
+  stopSenderLoop(clientId)
+
+  const oldSock = sockets.get(clientId)
+  if (oldSock) {
+    oldSock.ev.removeAllListeners()
+    try { oldSock.end() } catch {}
+  }
+
+  sockets.delete(clientId)
+  await markInactive(clientId)
+
+  if (resetSession) {
+    clearSession(clientId)
+  }
+
+  await setClientState(clientId, STATES.STOPPED)
+  await publishEvent({
+    type: "status",
+    clientId,
+    state: "STOPPED"
+  })
+
+  clientLog(clientId, "info", `⏹️ stop requested (resetSession=${resetSession})`)
+}
+
 module.exports = {
   initClient,
   getClient,
   listClients,
   startSenderLoop,
-  restartClient
+  restartClient,
+  stopClient
 }
