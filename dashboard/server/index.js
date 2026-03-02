@@ -80,6 +80,11 @@ app.get("/api/logs", async (req, res) => {
       timestamps: false
     })
 
+    if (Buffer.isBuffer(stream) || typeof stream === "string") {
+      const text = Buffer.isBuffer(stream) ? stream.toString("utf-8") : stream
+      return res.type("text/plain").send(text)
+    }
+
     const chunks = []
     stream.on("data", (chunk) => chunks.push(chunk))
     stream.on("end", () => {
