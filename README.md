@@ -573,3 +573,91 @@ Recommended frontend WS pattern:
 1. On every WS connect, immediately send `{ "clientId": "<id>" }`.
 2. Keep sending periodic `{ "clientId": "<id>", "type": "ping" }`.
 3. Treat `CONNECTING`, `QR_REQUIRED`, `CONNECTED`, `DISCONNECTED`, `LOGGED_OUT` as stream states.
+
+---
+
+## 18) Logging + Per-Client Logs + Restart
+
+### 18.1 Logging levels
+
+The worker and API now respect log levels to reduce terminal noise.
+
+Available levels (least to most noisy):
+
+- `silent` — no logs
+- `error` — only failures/crashes
+- `warn` — warnings + errors
+- `info` — normal operational events
+- `debug` — high-volume details
+
+Higher levels include everything below them. Example: `warn` includes `warn` + `error`.
+
+Environment variables:
+
+- `LOG_LEVEL` (default `info`) applies to both services
+- `API_LOG_LEVEL` (default `LOG_LEVEL`) controls Fastify + API logs
+- `CLIENT_LOG_LEVEL` (default `LOG_LEVEL`) controls per-client log files
+
+In `docker-compose.yaml`, defaults are set to:
+
+- `LOG_LEVEL=warn` (less terminal noise)
+- `API_LOG_LEVEL=warn`
+- `CLIENT_LOG_LEVEL=info`
+
+### 18.2 Per-client log files (worker)
+
+Set `LOG_CLIENTS_DIR` to enable per-client logs. In `docker-compose.yaml`:
+
+- `LOG_CLIENTS_DIR=/logs/clients`
+- `./logs:/logs` is mounted on the host
+
+Log files:
+
+- `./logs/clients/<clientId>.log`
+
+Restarting/clearing logs:
+
+- Clear one client log:
+
+```bash
+: > ./logs/clients/<clientId>.log
+```
+
+- Clear all client logs:
+
+```bash
+rm -f ./logs/clients/*.log
+```
+
+### 18.3 Restart a single client (without restarting the container)
+
+New API endpoint:
+
+`POST /clients/:clientId/restart`
+
+Optional body:
+
+```json
+{ "resetSession": true }
+```
+
+Behavior:
+
+- Restarts the client socket inside the worker.
+- If `resetSession=true`, the session folder is cleared before reconnecting.
+
+Example (restart without session reset):
+
+```bash
+curl -X POST http://localhost:3000/clients/<clientId>/restart \
+  -H 'content-type: application/json' \
+  -d '{"resetSession": false}'
+```
+
+Example (restart and clear session):
+
+```bash
+curl -X POST http://localhost:3000/clients/<clientId>/restart \
+  -H 'content-type: application/json' \
+  -d '{"resetSession": true}'
+```

@@ -1,5 +1,6 @@
 const Redis = require("ioredis")
-const { initClient, startSenderLoop } = require("./socketManager")
+const { initClient, startSenderLoop, restartClient } = require("./socketManager")
+const { info, warn, error } = require("./logger")
 
 const redis = new Redis({
   host: "redis",
@@ -7,18 +8,18 @@ const redis = new Redis({
 })
 
 async function startCommandListener() {
-  console.log("🧠 Redis command listener started")
+  info("🧠 Redis command listener started")
 
   while (true) {
     try {
       const res = await redis.brpop("wa:commands", 0)
 
       const payload = JSON.parse(res[1])
-      console.log("📥 Received command:", payload)
+      info("📥 Received command:", payload)
 
       switch (payload.type) {
         case "ADD_CLIENT": {
-          console.log(`➕ Adding client ${payload.clientId}`)
+          info(`➕ Adding client ${payload.clientId}`)
           await initClient(payload.clientId)
           break
         }
@@ -29,16 +30,23 @@ async function startCommandListener() {
           JSON.stringify(payload)
         )
 
-        console.log(`📥 Message queued for ${payload.clientId}`)
+        info(`📥 Message queued for ${payload.clientId}`)
         startSenderLoop(payload.clientId)
         break
       }
 
+      case "RESTART_CLIENT": {
+        const resetSession = Boolean(payload.resetSession)
+        info(`🔁 Restarting client ${payload.clientId} (resetSession=${resetSession})`)
+        await restartClient(payload.clientId, { resetSession })
+        break
+      }
+
         default:
-          console.log("⚠️ Unknown command type:", payload.type)
+          warn("⚠️ Unknown command type:", payload.type)
       }
     } catch (err) {
-      console.error("❌ Command processing failed", err)
+      error("❌ Command processing failed", err && err.message ? err.message : err)
     }
   }
 }

@@ -1,3 +1,5 @@
+const { debug } = require("./logger")
+
 async function sendMessageWithMedia(sock, jid, payload) {
   const { text, files = [] } = payload
 
@@ -5,7 +7,7 @@ async function sendMessageWithMedia(sock, jid, payload) {
   if (!files.length) {
     if (!text) return
     const res = await sock.sendMessage(jid, { text })
-    console.log("response from sendMessage", res)
+    debug("response from sendMessage", res && res.key ? res.key : res)
     return
   }
 
@@ -16,11 +18,11 @@ async function sendMessageWithMedia(sock, jid, payload) {
     const canCaption = canUseCaption(m.mimeType)
     const message = buildMediaMessage(m, canCaption ? text : undefined)
     const res = await sock.sendMessage(jid, message)
-    console.log("response from sendMessage single media", res)
+    debug("response from sendMessage single media", res && res.key ? res.key : res)
 
     if (text && !canCaption) {
       const resText = await sock.sendMessage(jid, { text })
-      console.log("response from sendMessage text after media", resText)
+      debug("response from sendMessage text after media", resText && resText.key ? resText.key : resText)
     }
     return
   }
@@ -29,12 +31,12 @@ async function sendMessageWithMedia(sock, jid, payload) {
   for (const m of files) {
     const message = buildMediaMessage(m)
     const res = await sock.sendMessage(jid, message)
-    console.log("response from sendMessage multiple media", res)
+    debug("response from sendMessage multiple media", res && res.key ? res.key : res)
   }
 
   if (text) {
     const res = await sock.sendMessage(jid, { text })
-    console.log("response from sendMessage text only", res)
+    debug("response from sendMessage text only", res && res.key ? res.key : res)
   }
 }
 

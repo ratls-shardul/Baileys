@@ -1,4 +1,5 @@
-const fastify = require("fastify")({ logger: true })
+const { info, error, LOG_LEVEL } = require("./logger")
+const fastify = require("fastify")({ logger: { level: LOG_LEVEL } })
 const redis = require("./redis")
 
 const start = async () => {
@@ -17,20 +18,21 @@ const start = async () => {
 
     const { startConsumer } = require("./streamConsumer")
     startConsumer().catch(err => {
-      console.error("❌ Stream consumer failed to start:", err)
+      error("❌ Stream consumer failed to start:", err && err.message ? err.message : err)
       process.exit(1)
     })
 
     await redis.ping()
-    console.log("✅ Redis connected")
+    info("✅ Redis connected")
 
     fastify.get("/health", async () => {
       return { status: "ok" }
     })
 
     await fastify.listen({ port: 3000, host: "0.0.0.0" })
-    console.log("🚀 API running on port 3000")
+    info("🚀 API running on port 3000")
   } catch (err) {
+    error("❌ API start failed", err && err.message ? err.message : err)
     fastify.log.error(err)
     process.exit(1)
   }

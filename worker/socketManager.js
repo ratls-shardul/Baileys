@@ -6,6 +6,7 @@ const { clearSession } = require("./sessionUtils")
 const { STATES, setClientState } = require("./clientState")
 const Redis = require("ioredis")
 const { sendMessageWithMedia } = require("./mediaSender")
+const { info, warn, error, debug, clientLog } = require("./logger")
 
 const WA_DEVICE_NAME = process.env.WA_DEVICE_NAME || "Admissions - CRM"
 const WA_DEVICE_PLATFORM = process.env.WA_DEVICE_PLATFORM || "Linux"
@@ -27,8 +28,8 @@ let redisPub = new Redis({
   maxRetriesPerRequest: 3
 })
 
-redis.on('error', (err) => console.error('❌ Redis error:', err.message))
-redisPub.on('error', (err) => console.error('❌ Redis PUB error:', err.message))
+redis.on('error', (err) => error('❌ Redis error:', err.message))
+redisPub.on('error', (err) => error('❌ Redis PUB error:', err.message))
 
 // Function to ensure fresh Redis connection for publishing
 async function ensurePublishConnection() {
@@ -36,7 +37,7 @@ async function ensurePublishConnection() {
     await redisPub.ping()
     return redisPub
   } catch (err) {
-    console.warn('⚠️ Redis PUB connection failed, creating new one...')
+    warn('⚠️ Redis PUB connection failed, creating new one...')
     redisPub.disconnect()
     redisPub = new Redis({
       host: "redis",
@@ -65,7 +66,7 @@ const recentNewLoginAt = new Map()
 
 async function publishEvent(event) {
   const startTime = Date.now()
-  console.log("📤 PUBLISHING EVENT to stream:", event)
+  info("📤 PUBLISHING EVENT to stream:", event)
   
   try {
     // Ensure we have a working connection
@@ -75,9 +76,9 @@ async function publishEvent(event) {
     try {
       const pingStart = Date.now()
       await pubClient.ping()
-      console.log(`   ✅ Redis PING ok (${Date.now() - pingStart}ms)`)
+      info(`   ✅ Redis PING ok (${Date.now() - pingStart}ms)`)
     } catch (pingErr) {
-      console.error(`   ❌ Redis PING failed:`, pingErr.message)
+      error(`   ❌ Redis PING failed:`, pingErr.message)
       return null // Don't crash, just return null
     }
     
@@ -97,12 +98,12 @@ async function publishEvent(event) {
     ])
     
     const duration = Date.now() - startTime
-    console.log(`✅ Event published to stream in ${duration}ms, Message ID: ${messageId}`)
+    info(`✅ Event published to stream in ${duration}ms, Message ID: ${messageId}`)
     return messageId
   } catch (err) {
     const duration = Date.now() - startTime
-    console.error(`❌ Failed to publish event to stream after ${duration}ms:`, err.message)
-    console.error("   Event was:", JSON.stringify(event))
+    error(`❌ Failed to publish event to stream after ${duration}ms:`, err.message)
+    error("   Event was:", JSON.stringify(event))
     
     // Don't throw - return null to prevent crashes
     return null
@@ -112,7 +113,7 @@ async function publishEvent(event) {
 async function initClient(clientId) {
 
   if (initializingClients.has(clientId)) {
-    console.log(`⏳ ${clientId} already initializing`)
+    clientLog(clientId, "info", `⏳ already initializing`)
     return
   }
 
@@ -123,7 +124,7 @@ async function initClient(clientId) {
     await setClientState(clientId, STATES.CONNECTING)
 
     if (sockets.has(clientId)) {
-      console.log(`⚠️ Client ${clientId} already initialized`)
+      clientLog(clientId, "warn", `⚠️ already initialized`)
       return sockets.get(clientId)
     }
 
@@ -132,7 +133,7 @@ async function initClient(clientId) {
     const { state, saveCreds } = await useMultiFileAuthState(sessionPath)
 
     const { version, isLatest } = await fetchLatestBaileysVersion()
-    console.log(`📦 Baileys WA version for ${clientId}: ${version.join(".")} (isLatest=${isLatest})`)
+    clientLog(clientId, "info", `📦 Baileys WA version: ${version.join(".")} (isLatest=${isLatest})`)
 
     const sock = makeWASocket({
       auth: state,
@@ -150,7 +151,7 @@ async function initClient(clientId) {
 
     sock.ev.on("connection.update", async (update) => {
       try {
-        console.log(`📡 [${clientId}] connection.update`, JSON.stringify(update))
+        clientLog(clientId, "debug", `📡 connection.update`, update)
 
         const { connection, qr, lastDisconnect, isNewLogin } = update
 
@@ -165,20 +166,20 @@ async function initClient(clientId) {
         // Try to publish, retry once if fails
         let published = await publishEvent({ type: "qr", clientId, qr })
         if (!published) {
-          console.warn("   Retrying QR publish...")
+          clientLog(clientId, "warn", "   Retrying QR publish...")
           await sleep(500)
           published = await publishEvent({ type: "qr", clientId, qr })
         }
         
         if (published) {
-          console.log("   ✅ QR published successfully")
+          clientLog(clientId, "info", "   ✅ QR published successfully")
         } else {
-          console.error("   ❌ QR publish failed after retry")
+          clientLog(clientId, "error", "   ❌ QR publish failed after retry")
         }
       }
 
       if (connection === "open") {
-        console.log(`🟢 ${clientId} connection opened`)
+        clientLog(clientId, "info", "🟢 connection opened")
         reconnectAttempts.delete(clientId)
         recentNewLoginAt.delete(clientId)
 
@@ -196,7 +197,7 @@ async function initClient(clientId) {
 
         // bootingClients.delete(clientId)
 
-        console.log(`✅ ${clientId} connected successfully`)
+        clientLog(clientId, "info", "✅ connected successfully")
 
         setTimeout(() => {
           startSenderLoop(clientId)
@@ -218,7 +219,7 @@ async function initClient(clientId) {
         //   return
         // }
 
-        console.log(`❌ ${clientId} disconnected (${statusCode})`)
+        clientLog(clientId, "warn", `❌ disconnected (${statusCode})`)
 
         // 🚪 Logged out / Unauthorized
         if (statusCode === DisconnectReason.loggedOut || statusCode === 401) {
@@ -234,9 +235,9 @@ async function initClient(clientId) {
           })
           
           if (publishResult) {
-            console.log(`✅ LOGGED_OUT event successfully published for ${clientId}`)
+            clientLog(clientId, "info", "✅ LOGGED_OUT event successfully published")
           } else {
-            console.error(`⚠️ LOGGED_OUT event failed to publish for ${clientId} - continuing anyway`)
+            clientLog(clientId, "error", "⚠️ LOGGED_OUT event failed to publish - continuing anyway")
           }
 
           const oldSock = sockets.get(clientId)
@@ -249,11 +250,11 @@ async function initClient(clientId) {
           sockets.delete(clientId)
           clearSession(clientId)
 
-          console.log(`📲 ${clientId} requires new QR`)
+          clientLog(clientId, "info", "📲 requires new QR")
 
           // Auto reinitialize so the same client gets a fresh QR.
           setTimeout(async () => {
-            console.log(`🔄 Reinitializing ${clientId} for new QR`)
+            clientLog(clientId, "info", "🔄 Reinitializing for new QR")
             await initClient(clientId)
           }, 1500)
 
@@ -277,7 +278,7 @@ async function initClient(clientId) {
           }
           sockets.delete(clientId)
 
-          console.log(`🔁 ${clientId} got post-login 515; restarting socket without session reset`)
+          clientLog(clientId, "info", "🔁 got post-login 515; restarting socket without session reset")
           setTimeout(() => {
             initClient(clientId)
           }, 1500)
@@ -306,7 +307,7 @@ async function initClient(clientId) {
 
         // Cap auto-retries to avoid infinite tight loops.
         if (attempt > 8) {
-          console.error(`🛑 ${clientId} exceeded reconnect attempts (${attempt - 1}), waiting for manual reconnect`)
+          clientLog(clientId, "error", `🛑 exceeded reconnect attempts (${attempt - 1}), waiting for manual reconnect`)
           return
         }
 
@@ -314,7 +315,7 @@ async function initClient(clientId) {
         if (statusCode !== 405) {
           clearSession(clientId)
         } else {
-          console.warn(`⚠️ ${clientId} got 405; preserving session to avoid QR/reset loop`)
+          clientLog(clientId, "warn", "⚠️ got 405; preserving session to avoid QR/reset loop")
         }
 
         const delayMs = statusCode === 405
@@ -322,13 +323,13 @@ async function initClient(clientId) {
           : Math.min(3000 * attempt, 30000)
 
         setTimeout(() => {
-          console.log(`🔄 Reinitializing ${clientId} (attempt ${attempt}, delay ${delayMs}ms)...`)
+          clientLog(clientId, "info", `🔄 Reinitializing (attempt ${attempt}, delay ${delayMs}ms)...`)
           initClient(clientId)
         }, delayMs)
       }
       } catch (connUpdateErr) {
-        console.error(`❌ Error in connection.update handler for ${clientId}:`, connUpdateErr.message)
-        console.error(`   Stack:`, connUpdateErr.stack)
+        clientLog(clientId, "error", `❌ Error in connection.update handler: ${connUpdateErr.message}`)
+        clientLog(clientId, "error", `   Stack: ${connUpdateErr.stack}`)
         // Don't crash - just log the error
       }
     })
@@ -352,7 +353,7 @@ async function startSenderLoop(clientId) {
   if (senderLoops.has(clientId)) return
 
   senderLoops.add(clientId)
-  console.log(`▶️ Sender loop started for ${clientId}`)
+  clientLog(clientId, "info", "▶️ Sender loop started")
 
   // Dedicated Redis connection per sender loop.
   // BRPOP is a blocking command and must not share one connection across client loops.
@@ -364,7 +365,7 @@ async function startSenderLoop(clientId) {
   })
   senderRedisClients.set(clientId, queueRedis)
   queueRedis.on("error", (err) => {
-    console.error(`❌ Queue Redis error for ${clientId}:`, err.message)
+    clientLog(clientId, "error", `❌ Queue Redis error: ${err.message}`)
   })
 
   while (true) {
@@ -376,7 +377,7 @@ async function startSenderLoop(clientId) {
 
       const sock = sockets.get(clientId)
       if (!sock) {
-        console.log(`⏸️ ${clientId} socket missing, re-queueing`)
+        clientLog(clientId, "warn", "⏸️ socket missing, re-queueing")
         await queueRedis.lpush(`wa:pending:${clientId}`, raw)
         await sleep(3000)
         continue
@@ -388,14 +389,14 @@ async function startSenderLoop(clientId) {
         ? phone
         : `91${phone}@s.whatsapp.net`
 
-      console.log(`📤 Sending via ${clientId} → ${payload.phoneNumber}`)
+      clientLog(clientId, "info", `📤 Sending → ${payload.phoneNumber}`)
 
       await sendMessageWithMedia(sock, jid, payload)
 
       // 🎲 RANDOM DELAY AFTER SEND
       await sleep(randomBetween(2000, 5000))
     } catch (err) {
-      console.error(`❌ Sender loop error for ${clientId}`, err)
+      clientLog(clientId, "error", `❌ Sender loop error: ${err && err.message ? err.message : err}`)
       await sleep(5000)
     }
   }
@@ -409,9 +410,38 @@ function listClients() {
   return [...sockets.keys()]
 }
 
+async function restartClient(clientId, { resetSession = false } = {}) {
+  connectedClients.delete(clientId)
+  reconnectAttempts.delete(clientId)
+  recentNewLoginAt.delete(clientId)
+
+  const oldSock = sockets.get(clientId)
+  if (oldSock) {
+    oldSock.ev.removeAllListeners()
+    try { oldSock.end() } catch {}
+  }
+
+  sockets.delete(clientId)
+
+  if (resetSession) {
+    clearSession(clientId)
+  }
+
+  await setClientState(clientId, STATES.CONNECTING)
+  await publishEvent({
+    type: "status",
+    clientId,
+    state: "CONNECTING"
+  })
+
+  clientLog(clientId, "info", `🔁 restart requested (resetSession=${resetSession})`)
+  await initClient(clientId)
+}
+
 module.exports = {
   initClient,
   getClient,
   listClients,
-  startSenderLoop
+  startSenderLoop,
+  restartClient
 }

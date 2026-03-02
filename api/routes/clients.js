@@ -39,6 +39,18 @@ module.exports = async function (fastify) {
     return { ok: true, clientId }
   })
 
+  fastify.post("/clients/:clientId/restart", async (req, res) => {
+    const { clientId } = req.params
+    const resetSession = Boolean(req.body && req.body.resetSession)
+
+    await redis.lpush(
+      "wa:commands",
+      JSON.stringify({ type: "RESTART_CLIENT", clientId, resetSession })
+    )
+
+    return { ok: true, clientId, resetSession }
+  })
+
   fastify.get("/clients/:clientId/status", async (req, res) => {
   const { clientId } = req.params;
 

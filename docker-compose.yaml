@@ -32,8 +32,12 @@ services:
       WA_DEVICE_NAME: "Admissions - CRM"
       WA_DEVICE_PLATFORM: "Linux"
       WA_DEVICE_VERSION: "120.0.0"
+      LOG_LEVEL: "warn"
+      CLIENT_LOG_LEVEL: "info"
+      LOG_CLIENTS_DIR: "/logs/clients"
     volumes:
       - ./sessions:/sessions
+      - ./logs:/logs
     restart: unless-stopped
     deploy:
       resources:
@@ -47,6 +51,9 @@ services:
         condition: service_healthy
     ports:
       - "3000:3000"
+    environment:
+      LOG_LEVEL: "warn"
+      API_LOG_LEVEL: "warn"
     restart: unless-stopped
     deploy:
       resources:

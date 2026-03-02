@@ -1,11 +1,12 @@
 const fs = require("fs")
+const { clientLog } = require("./logger")
 
 function clearSession(clientId) {
   const sessionPath = `/sessions/${clientId}`
 
   if (fs.existsSync(sessionPath)) {
     fs.rmSync(sessionPath, { recursive: true, force: true })
-    console.log(`🧹 Cleared session for ${clientId}`)
+  clientLog(clientId, "info", "🧹 Cleared session")
   }
 }
 

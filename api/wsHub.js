@@ -1,9 +1,10 @@
+const { info, warn, error, debug } = require("./logger")
 // No external dependencies needed
 const clients = new Map()
 // clientId -> Set<WebSocket>
 
 function register(clientId, ws) {
-  console.log(`📝 Registering WebSocket for: ${clientId}`)
+  info(`📝 Registering WebSocket for: ${clientId}`)
   
   if (!clients.has(clientId)) {
     clients.set(clientId, new Set())
@@ -12,11 +13,11 @@ function register(clientId, ws) {
   const clientSockets = clients.get(clientId)
   clientSockets.add(ws)
   
-  console.log(`✅ Total sockets for ${clientId}: ${clientSockets.size}`)
+  info(`✅ Total sockets for ${clientId}: ${clientSockets.size}`)
 
   // Clean up on close
   ws.on("close", () => {
-    console.log(`🔌 WebSocket closing for ${clientId}`)
+    info(`🔌 WebSocket closing for ${clientId}`)
     unregister(clientId, ws)
   })
 }
@@ -26,12 +27,12 @@ function unregister(clientId, ws) {
   
   if (clientSockets) {
     clientSockets.delete(ws)
-    console.log(`🗑️ Removed socket for ${clientId}, remaining: ${clientSockets.size}`)
+    info(`🗑️ Removed socket for ${clientId}, remaining: ${clientSockets.size}`)
     
     // Remove entry if no more sockets
     if (clientSockets.size === 0) {
       clients.delete(clientId)
-      console.log(`🧹 Cleaned up ${clientId} from registry`)
+      info(`🧹 Cleaned up ${clientId} from registry`)
     }
   }
 }
@@ -39,14 +40,14 @@ function unregister(clientId, ws) {
 function broadcast(clientId, payload) {
   const clientSockets = clients.get(clientId)
 
-  console.log(`📢 BROADCAST to ${clientId}:`, {
+  debug(`📢 BROADCAST to ${clientId}:`, {
     hasEntry: !!clientSockets,
     socketsCount: clientSockets?.size || 0,
     payload: payload
   })
 
   if (!clientSockets || clientSockets.size === 0) {
-    console.warn(`⚠️ No active WebSockets for ${clientId}`)
+    warn(`⚠️ No active WebSockets for ${clientId}`)
     return
   }
 
@@ -60,18 +61,18 @@ function broadcast(clientId, payload) {
       if (ws.readyState === 1) { // OPEN
         ws.send(msg)
         sentCount++
-        console.log(`✅ Sent to socket (readyState: ${ws.readyState})`)
+        debug(`✅ Sent to socket (readyState: ${ws.readyState})`)
       } else {
-        console.warn(`⚠️ Socket not ready (readyState: ${ws.readyState})`)
+        warn(`⚠️ Socket not ready (readyState: ${ws.readyState})`)
         failedCount++
       }
     } catch (err) {
-      console.error(`❌ Failed to send to socket:`, err.message)
+      error(`❌ Failed to send to socket:`, err.message)
       failedCount++
     }
   }
 
-  console.log(`📊 Broadcast complete: ${sentCount} sent, ${failedCount} failed`)
+  debug(`📊 Broadcast complete: ${sentCount} sent, ${failedCount} failed`)
 }
 
 function getStats() {

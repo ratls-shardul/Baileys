@@ -1,4 +1,5 @@
 const Redis = require("ioredis")
+const { clientLog } = require("./logger")
 
 const redis = new Redis({
   host: "redis",
@@ -18,7 +19,7 @@ const STATES = {
 
 async function setClientState(clientId, state) {
   await redis.hset(KEY, clientId, state)
-  console.log(`📊 ${clientId} state → ${state}`)
+  clientLog(clientId, "info", `📊 state → ${state}`)
 }
 
 async function getClientState(clientId) {

@@ -1,4 +1,5 @@
 const Redis = require("ioredis")
+const { info, warn, error } = require("./logger")
 
 const redis = new Redis({
   host: "redis",
@@ -6,25 +7,25 @@ const redis = new Redis({
   maxRetriesPerRequest: null,
   retryStrategy(times) {
     const delay = Math.min(times * 100, 2000)
-    console.log(`🔁 Redis retry #${times}, delay ${delay}ms`)
+    warn(`🔁 Redis retry #${times}, delay ${delay}ms`)
     return delay
   }
 })
 
 redis.on("connect", () => {
-  console.log("✅ Redis connected")
+  info("✅ Redis connected")
 })
 
 redis.on("ready", () => {
-  console.log("🚀 Redis ready")
+  info("🚀 Redis ready")
 })
 
 redis.on("error", (err) => {
-  console.error("❌ Redis error:", err.message)
+  error("❌ Redis error:", err.message)
 })
 
 redis.on("close", () => {
-  console.warn("⚠️ Redis connection closed")
+  warn("⚠️ Redis connection closed")
 })
 
 module.exports = redis

@@ -1,5 +1,6 @@
 const { register } = require("../wsHub")
 const redis = require("../redis")
+const { info, warn, error, debug } = require("../logger")
 
 module.exports = async function (fastify) {
   fastify.get("/ws", { websocket: true }, (socket, req) => {
@@ -13,7 +14,7 @@ module.exports = async function (fastify) {
         const data = JSON.parse(raw.toString())
         
         if (!data.clientId) {
-          console.warn("⚠️ Received message without clientId")
+          warn("⚠️ Received message without clientId")
           return
         }
 
@@ -24,13 +25,13 @@ module.exports = async function (fastify) {
         if (!registered) {
           register(clientId, socket)
           registered = true
-          console.log(`✅ WebSocket registered for ${clientId}`)
+          info(`✅ WebSocket registered for ${clientId}`)
         }
 
         // Handle ping messages
         if (data.type === 'ping') {
           lastPing = Date.now()
-          console.log(`💓 Ping from ${clientId}`)
+          debug(`💓 Ping from ${clientId}`)
           // Optional: Send pong response
           socket.send(JSON.stringify({
             type: 'pong',
@@ -48,7 +49,7 @@ module.exports = async function (fastify) {
           state: state || "NON_EXISTENT"
         }))
         
-        console.log(`📤 Sent status: ${state || "NON_EXISTENT"} for ${clientId}`)
+        debug(`📤 Sent status: ${state || "NON_EXISTENT"} for ${clientId}`)
 
         // Send QR if available
         const qr = await redis.get(`wa:qr:${clientId}`)
@@ -58,26 +59,26 @@ module.exports = async function (fastify) {
             clientId,
             qr
           }))
-          console.log(`📤 Sent QR for ${clientId}`)
+          debug(`📤 Sent QR for ${clientId}`)
         }
 
       } catch (err) {
-        console.error("❌ WS message error:", err)
+        error("❌ WS message error:", err && err.message ? err.message : err)
       }
     })
 
     socket.on("close", (code, reason) => {
-      console.log(`🔌 WebSocket closed for ${clientId || 'unknown'}`)
-      console.log(`   Close code: ${code}`)
-      console.log(`   Close reason: ${reason || 'none'}`)
-      console.log(`   Was registered: ${registered}`)
-      console.log(`   Last ping: ${Date.now() - lastPing}ms ago`)
+      info(`🔌 WebSocket closed for ${clientId || 'unknown'}`)
+      debug(`   Close code: ${code}`)
+      debug(`   Close reason: ${reason || 'none'}`)
+      debug(`   Was registered: ${registered}`)
+      debug(`   Last ping: ${Date.now() - lastPing}ms ago`)
     })
 
     socket.on("error", (err) => {
-      console.error(`❌ WebSocket error for ${clientId || 'unknown'}:`, err.message)
+      error(`❌ WebSocket error for ${clientId || 'unknown'}:`, err.message)
     })
     
-    console.log("🔌 New WebSocket connection established")
+    info("🔌 New WebSocket connection established")
   })
 }

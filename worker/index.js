@@ -1,9 +1,10 @@
 global.crypto = require("crypto").webcrypto
 
 const { startCommandListener } = require("./commandListener")
+const { info, error } = require("./logger")
 
 async function start() {
-  console.log("🚀 WhatsApp worker starting...")
+  info("🚀 WhatsApp worker starting...")
 
   // Optional preload (can remove later)
   // await initClient("client-1")
@@ -18,6 +19,6 @@ async function start() {
 }
 
 start().catch(err => {
-  console.error("❌ Worker crashed", err)
+  error("❌ Worker crashed", err && err.message ? err.message : err)
   process.exit(1)
 })

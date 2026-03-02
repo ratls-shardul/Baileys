@@ -1,12 +1,13 @@
 const Redis = require("ioredis")
 const { broadcast } = require("./wsHub")
+const { info, warn, error, debug } = require("./logger")
 
 const redis = new Redis({
   host: process.env.REDIS_HOST || "redis",
   port: 6379,
   retryStrategy(times) {
     const delay = Math.min(times * 100, 2000)
-    console.log(`🔁 Redis stream consumer retry #${times}, delay ${delay}ms`)
+    warn(`🔁 Redis stream consumer retry #${times}, delay ${delay}ms`)
     return delay
   }
 })
@@ -25,7 +26,7 @@ let consumerRunning = false
  */
 async function initializeConsumerGroup() {
   try {
-    console.log(`📡 Initializing consumer group: ${CONSUMER_GROUP}`)
+    info(`📡 Initializing consumer group: ${CONSUMER_GROUP}`)
     
     // Try to create consumer group
     // $ means "start from new messages only"
@@ -38,13 +39,13 @@ async function initializeConsumerGroup() {
       'MKSTREAM'
     )
     
-    console.log(`✅ Consumer group '${CONSUMER_GROUP}' created successfully`)
+    info(`✅ Consumer group '${CONSUMER_GROUP}' created successfully`)
   } catch (err) {
     if (err.message.includes('BUSYGROUP')) {
       // Group already exists - this is fine
-      console.log(`✅ Consumer group '${CONSUMER_GROUP}' already exists`)
+      info(`✅ Consumer group '${CONSUMER_GROUP}' already exists`)
     } else {
-      console.error(`❌ Failed to create consumer group:`, err)
+      error(`❌ Failed to create consumer group:`, err && err.message ? err.message : err)
       throw err
     }
   }
@@ -58,24 +59,24 @@ async function processMessage(messageId, fields) {
     // Fields is an array: ['data', '{"type":"status",...}']
     const eventDataIndex = fields.indexOf('data')
     if (eventDataIndex === -1 || eventDataIndex + 1 >= fields.length) {
-      console.error(`❌ Invalid message format, no 'data' field:`, fields)
+      error(`❌ Invalid message format, no 'data' field:`, fields)
       return false
     }
     
     const eventData = fields[eventDataIndex + 1]
     const event = JSON.parse(eventData)
     
-    console.log(`📨 STREAM MESSAGE [${messageId}]:`)
-    console.log(`   Type: ${event.type}`)
-    console.log(`   State: ${event.state || 'N/A'}`)
-    console.log(`   ClientId: ${event.clientId}`)
+    debug(`📨 STREAM MESSAGE [${messageId}]`)
+    debug(`   Type: ${event.type}`)
+    debug(`   State: ${event.state || 'N/A'}`)
+    debug(`   ClientId: ${event.clientId}`)
     
     // Broadcast to WebSocket clients
     broadcast(event.clientId, event)
     
     return true
   } catch (err) {
-    console.error(`❌ Failed to process message ${messageId}:`, err)
+    error(`❌ Failed to process message ${messageId}:`, err && err.message ? err.message : err)
     return false
   }
 }
@@ -87,13 +88,13 @@ async function acknowledgeMessage(messageId) {
   try {
     const result = await redis.xack(STREAM_KEY, CONSUMER_GROUP, messageId)
     if (result === 1) {
-      console.log(`✅ Message acknowledged: ${messageId}`)
+      debug(`✅ Message acknowledged: ${messageId}`)
     } else {
-      console.warn(`⚠️ Message acknowledge returned ${result}: ${messageId}`)
+      warn(`⚠️ Message acknowledge returned ${result}: ${messageId}`)
     }
     return result
   } catch (err) {
-    console.error(`❌ Failed to acknowledge message ${messageId}:`, err)
+    error(`❌ Failed to acknowledge message ${messageId}:`, err && err.message ? err.message : err)
     return 0
   }
 }
@@ -104,7 +105,7 @@ async function acknowledgeMessage(messageId) {
  */
 async function processPendingMessages() {
   try {
-    console.log(`🔍 Checking for pending messages...`)
+    debug(`🔍 Checking for pending messages...`)
     
     // Read pending messages for this consumer
     // 0 means start from oldest pending
@@ -115,14 +116,14 @@ async function processPendingMessages() {
     )
     
     if (!pending || pending.length === 0) {
-      console.log(`   No pending messages`)
+      debug(`   No pending messages`)
       return 0
     }
     
     let processed = 0
     for (const [stream, entries] of pending) {
       for (const [messageId, fields] of entries) {
-        console.log(`📦 Processing pending message: ${messageId}`)
+        debug(`📦 Processing pending message: ${messageId}`)
         const success = await processMessage(messageId, fields)
         if (success) {
           await acknowledgeMessage(messageId)
@@ -131,10 +132,10 @@ async function processPendingMessages() {
       }
     }
     
-    console.log(`✅ Processed ${processed} pending messages`)
+    info(`✅ Processed ${processed} pending messages`)
     return processed
   } catch (err) {
-    console.error(`❌ Error processing pending messages:`, err)
+    error(`❌ Error processing pending messages:`, err && err.message ? err.message : err)
     return 0
   }
 }
@@ -145,12 +146,12 @@ async function processPendingMessages() {
  */
 async function startConsumer() {
   if (consumerRunning) {
-    console.warn(`⚠️ Consumer already running`)
+    warn(`⚠️ Consumer already running`)
     return
   }
   
   consumerRunning = true
-  console.log(`🚀 Starting Redis Streams consumer: ${CONSUMER_NAME}`)
+  info(`🚀 Starting Redis Streams consumer: ${CONSUMER_NAME}`)
   
   try {
     // Initialize consumer group
@@ -159,7 +160,7 @@ async function startConsumer() {
     // Process any pending messages first
     await processPendingMessages()
     
-    console.log(`👂 Listening for new messages on stream: ${STREAM_KEY}`)
+    info(`👂 Listening for new messages on stream: ${STREAM_KEY}`)
     isConsuming = true
     
     // Main consumer loop
@@ -180,14 +181,14 @@ async function startConsumer() {
           // No messages, loop will continue after timeout
           // Log heartbeat every 30 seconds
           if (Date.now() % 30000 < 1000) {
-            console.log(`💓 Stream consumer heartbeat - waiting for messages...`)
+            debug(`💓 Stream consumer heartbeat - waiting for messages...`)
           }
           continue
         }
         
         // Process all received messages
         for (const [stream, entries] of messages) {
-          console.log(`📬 Received ${entries.length} new messages`)
+          debug(`📬 Received ${entries.length} new messages`)
           
           for (const [messageId, fields] of entries) {
             const success = await processMessage(messageId, fields)
@@ -195,7 +196,7 @@ async function startConsumer() {
             if (success) {
               await acknowledgeMessage(messageId)
             } else {
-              console.error(`⚠️ Message processing failed, will retry: ${messageId}`)
+              warn(`⚠️ Message processing failed, will retry: ${messageId}`)
               // Message stays in pending, will be reprocessed later
             }
           }
@@ -203,16 +204,16 @@ async function startConsumer() {
         
       } catch (err) {
         if (err.message && err.message.includes('NOGROUP')) {
-          console.error(`❌ Consumer group disappeared, reinitializing...`)
+          error(`❌ Consumer group disappeared, reinitializing...`)
           await initializeConsumerGroup()
         } else if (err.message && err.message.includes('timeout')) {
-          console.warn(`⚠️ Redis timeout, continuing...`)
+          warn(`⚠️ Redis timeout, continuing...`)
         } else if (err.message && err.message.includes('ECONNREFUSED')) {
-          console.error(`❌ Redis connection refused, retrying in 2s...`)
+          error(`❌ Redis connection refused, retrying in 2s...`)
           await new Promise(resolve => setTimeout(resolve, 2000))
         } else {
-          console.error(`❌ Error in consumer loop:`, err.message)
-          console.error(`   Stack:`, err.stack)
+          error(`❌ Error in consumer loop:`, err.message)
+          error(`   Stack:`, err.stack)
         }
         
         // Wait before retrying
@@ -221,7 +222,7 @@ async function startConsumer() {
     }
     
   } catch (err) {
-    console.error(`❌ Stream consumer crashed:`, err)
+    error(`❌ Stream consumer crashed:`, err && err.message ? err.message : err)
     consumerRunning = false
     isConsuming = false
     throw err
@@ -232,15 +233,15 @@ async function startConsumer() {
  * Stop the consumer gracefully
  */
 async function stopConsumer() {
-  console.log(`🛑 Stopping consumer: ${CONSUMER_NAME}`)
+  info(`🛑 Stopping consumer: ${CONSUMER_NAME}`)
   consumerRunning = false
   isConsuming = false
   
   try {
     await redis.quit()
-    console.log(`✅ Consumer stopped cleanly`)
+    info(`✅ Consumer stopped cleanly`)
   } catch (err) {
-    console.error(`❌ Error stopping consumer:`, err)
+    error(`❌ Error stopping consumer:`, err && err.message ? err.message : err)
   }
 }
 
