@@ -163,6 +163,12 @@ button:disabled {
   color: #ffd3d3;
 }
 
+.danger {
+  border-color: rgba(255, 107, 107, 0.9) !important;
+  color: #ffd3d3 !important;
+  background: #2b1518 !important;
+}
+
 .stat-row {
   display: flex;
   gap: 12px;

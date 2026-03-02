@@ -100,6 +100,11 @@ function App() {
     await refreshAll()
   }
 
+  async function deleteClient(clientId) {
+    await fetch(`${apiBase}/clients/${encodeURIComponent(clientId)}`, { method: "DELETE" })
+    await refreshAll()
+  }
+
   async function sendTestMessage() {
     if (!sendForm.clientId || !sendForm.phoneNumber || !sendForm.text) return
     await apiPost("/messages/send", {
@@ -211,6 +216,7 @@ function App() {
                     <button onClick={() => restartClient(clientId, true)}>Reset+Restart</button>
                     <button onClick={() => stopClient(clientId, false)}>Stop</button>
                     <button onClick={() => stopClient(clientId, true)}>Reset+Stop</button>
+                    <button className="danger" onClick={() => deleteClient(clientId)}>Delete</button>
                   </div>
                 </div>
               )
@@ -252,6 +258,7 @@ function App() {
             <button disabled={!selectedClient} onClick={() => restartClient(selectedClient, true)}>Reset+Restart</button>
             <button disabled={!selectedClient} onClick={() => stopClient(selectedClient, false)}>Stop</button>
             <button disabled={!selectedClient} onClick={() => stopClient(selectedClient, true)}>Reset+Stop</button>
+            <button className="danger" disabled={!selectedClient} onClick={() => deleteClient(selectedClient)}>Delete</button>
           </div>
         </div>
       </section>

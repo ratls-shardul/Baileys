@@ -3,7 +3,7 @@ const { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBailey
 const Pino = require("pino")
 
 const { clearSession } = require("./sessionUtils")
-const { STATES, setClientState } = require("./clientState")
+const { STATES, setClientState, removeClientState } = require("./clientState")
 const Redis = require("ioredis")
 const { sendMessageWithMedia } = require("./mediaSender")
 const { info, warn, error, debug, clientLog } = require("./logger")
@@ -528,11 +528,45 @@ async function stopClient(clientId, { resetSession = false } = {}) {
   clientLog(clientId, "info", `⏹️ stop requested (resetSession=${resetSession})`)
 }
 
+async function deleteClient(clientId) {
+  stoppedClients.add(clientId)
+  connectedClients.delete(clientId)
+  reconnectAttempts.delete(clientId)
+  recentNewLoginAt.delete(clientId)
+  stopSenderLoop(clientId)
+
+  const oldSock = sockets.get(clientId)
+  if (oldSock) {
+    oldSock.ev.removeAllListeners()
+    try { oldSock.end() } catch {}
+  }
+
+  sockets.delete(clientId)
+  await markInactive(clientId)
+
+  try {
+    await redis.del(`wa:qr:${clientId}`)
+    await redis.del(`wa:pending:${clientId}`)
+    await removeClientState(clientId)
+  } catch {}
+
+  clearSession(clientId)
+
+  await publishEvent({
+    type: "status",
+    clientId,
+    state: "DELETED"
+  })
+
+  clientLog(clientId, "warn", "🧨 deleted client state + session")
+}
+
 module.exports = {
   initClient,
   getClient,
   listClients,
   startSenderLoop,
   restartClient,
-  stopClient
+  stopClient,
+  deleteClient
 }

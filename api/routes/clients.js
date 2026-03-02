@@ -63,6 +63,17 @@ module.exports = async function (fastify) {
     return { ok: true, clientId, resetSession }
   })
 
+  fastify.delete("/clients/:clientId", async (req, res) => {
+    const { clientId } = req.params
+
+    await redis.lpush(
+      "wa:commands",
+      JSON.stringify({ type: "DELETE_CLIENT", clientId })
+    )
+
+    return { ok: true, clientId }
+  })
+
   fastify.get("/clients/:clientId/status", async (req, res) => {
   const { clientId } = req.params;
 

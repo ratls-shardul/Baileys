@@ -697,7 +697,27 @@ curl -X POST http://localhost:3000/clients/<clientId>/stop \
   -d '{"resetSession": true}'
 ```
 
-### 18.5 Active sockets count
+### 18.5 Delete a client (clear everything)
+
+New API endpoint:
+
+`DELETE /clients/:clientId`
+
+Behavior:
+
+- Stops the socket (if active).
+- Clears session files.
+- Clears pending queue `wa:pending:<clientId>`.
+- Clears QR `wa:qr:<clientId>`.
+- Removes state entry from `wa:clients:state`.
+
+Example:
+
+```bash
+curl -X DELETE http://localhost:3000/clients/<clientId>
+```
+
+### 18.6 Active sockets count
 
 New API endpoint:
 

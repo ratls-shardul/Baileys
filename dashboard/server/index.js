@@ -86,11 +86,11 @@ app.get("/api/logs", async (req, res) => {
       const buf = Buffer.concat(chunks)
       res.type("text/plain").send(buf.toString("utf-8"))
     })
-    stream.on("error", () => {
-      res.status(500).send("Failed to read logs")
+    stream.on("error", (err) => {
+      res.status(500).send(`Failed to read logs: ${err && err.message ? err.message : "unknown error"}`)
     })
   } catch (err) {
-    res.status(500).send("Failed to read logs")
+    res.status(500).send(`Failed to read logs: ${err && err.message ? err.message : "unknown error"}`)
   }
 })
 

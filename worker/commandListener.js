@@ -1,5 +1,5 @@
 const Redis = require("ioredis")
-const { initClient, startSenderLoop, restartClient, stopClient } = require("./socketManager")
+const { initClient, startSenderLoop, restartClient, stopClient, deleteClient } = require("./socketManager")
 const { info, warn, error } = require("./logger")
 
 const redis = new Redis({
@@ -46,6 +46,12 @@ async function startCommandListener() {
         const resetSession = Boolean(payload.resetSession)
         info(`⏹️ Stopping client ${payload.clientId} (resetSession=${resetSession})`)
         await stopClient(payload.clientId, { resetSession })
+        break
+      }
+
+      case "DELETE_CLIENT": {
+        info(`🧨 Deleting client ${payload.clientId}`)
+        await deleteClient(payload.clientId)
         break
       }
 
