@@ -412,18 +412,17 @@ async function startSenderLoop(clientId) {
       if (senderStopFlags.get(clientId)) {
         break
       }
-      // 🔑 BLOCK until a message arrives
+      const sock = sockets.get(clientId)
+      if (!sock || !connectedClients.has(clientId)) {
+        // Do not dequeue while client is disconnected/uninitialized.
+        await sleep(2000)
+        continue
+      }
+
+      // 🔑 BLOCK until a message arrives (one-at-a-time processing)
       const res = await queueRedis.brpop(`wa:pending:${clientId}`, 0)
       const raw = res[1]
       const payload = JSON.parse(raw)
-
-      const sock = sockets.get(clientId)
-      if (!sock) {
-        clientLog(clientId, "warn", "⏸️ socket missing, re-queueing")
-        await queueRedis.lpush(`wa:pending:${clientId}`, raw)
-        await sleep(3000)
-        continue
-      }
 
       const phone = payload.phoneNumber.toString()
 
@@ -432,8 +431,15 @@ async function startSenderLoop(clientId) {
         : `91${phone}@s.whatsapp.net`
 
       clientLog(clientId, "info", `📤 Sending → ${payload.phoneNumber}`)
-
-      await sendMessageWithMedia(sock, jid, payload)
+      try {
+        await sendMessageWithMedia(sock, jid, payload)
+      } catch (sendErr) {
+        clientLog(clientId, "error", `❌ Send failed, re-queueing: ${sendErr && sendErr.message ? sendErr.message : sendErr}`)
+        // Push back to the right so it stays the next item to retry (FIFO-safe retry).
+        await queueRedis.rpush(`wa:pending:${clientId}`, raw)
+        await sleep(3000)
+        continue
+      }
 
       // 🎲 RANDOM DELAY AFTER SEND
       await sleep(randomBetween(2000, 5000))

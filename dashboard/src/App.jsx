@@ -16,6 +16,7 @@ function App() {
   const [logTail, setLogTail] = useState(200)
   const [sendForm, setSendForm] = useState({ clientId: "", phoneNumber: "", text: "" })
   const [newClientId, setNewClientId] = useState("")
+  const [queueLookupId, setQueueLookupId] = useState("")
   const [queueClientId, setQueueClientId] = useState("")
   const [queueData, setQueueData] = useState(null)
   const [queueLoading, setQueueLoading] = useState(false)
@@ -120,7 +121,9 @@ function App() {
   }
 
   async function loadQueue(clientId) {
+    if (!clientId) return
     setQueueClientId(clientId)
+    setQueueLookupId(clientId)
     setQueueLoading(true)
     setQueueError("")
     try {
@@ -299,6 +302,19 @@ function App() {
       <section className="grid">
         <div className="card">
           <div className="section-title">Client Queue</div>
+          <div className="queue-lookup">
+            <input
+              value={queueLookupId}
+              onChange={(e) => setQueueLookupId(e.target.value)}
+              placeholder="Enter clientId to view queue (including non-created clients)"
+            />
+            <button onClick={() => loadQueue(queueLookupId.trim())} disabled={!queueLookupId.trim() || queueLoading}>
+              View Queue
+            </button>
+            <button onClick={() => clearQueue(queueLookupId.trim(), true)} disabled={!queueLookupId.trim() || queueLoading}>
+              Clear Queue
+            </button>
+          </div>
           {!queueClientId && <div className="empty">Pick a client and click View Queue.</div>}
           {queueClientId && (
             <>

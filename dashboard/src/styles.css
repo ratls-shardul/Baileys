@@ -220,6 +220,13 @@ button:disabled {
   margin-bottom: 8px;
 }
 
+.queue-lookup {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
 .queue-actions {
   display: flex;
   gap: 8px;
@@ -264,4 +271,5 @@ button:disabled {
 @media (max-width: 900px) {
   .grid.wide { grid-template-columns: 1fr; }
   .stat-row { flex-direction: column; }
+  .queue-lookup { grid-template-columns: 1fr; }
 }
