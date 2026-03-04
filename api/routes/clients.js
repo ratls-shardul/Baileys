@@ -1,6 +1,7 @@
 const redis = require("../redis")
 
 const STATE_KEY = "wa:clients:state"
+const CLIENT_ID_RE = /^[a-zA-Z0-9._:-]{1,120}$/
 
 module.exports = async function (fastify) {
 
@@ -10,6 +11,20 @@ module.exports = async function (fastify) {
 
   fastify.post("/clients/:clientId", async (req, res) => {
     const { clientId } = req.params
+    if (!CLIENT_ID_RE.test(clientId)) {
+      return res.code(400).send({
+        error: "Invalid clientId format"
+      })
+    }
+
+    const existingState = await redis.hget(STATE_KEY, clientId)
+    if (existingState) {
+      return res.code(409).send({
+        error: "Client already exists",
+        clientId,
+        state: existingState
+      })
+    }
 
     await redis.hset(STATE_KEY, clientId, "CREATED")
 

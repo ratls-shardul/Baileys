@@ -49,7 +49,11 @@ function canUseCaption(mimeType = "") {
 }
 
 function buildMediaMessage(file, caption) {
-  const { file_url, mimeType : mimetype , filename } = file
+  const { file_url, mimeType, filename } = file || {}
+  if (!file_url || typeof file_url !== "string") {
+    throw new Error("Invalid media payload: file_url is required")
+  }
+  const mimetype = typeof mimeType === "string" ? mimeType.toLowerCase() : "application/octet-stream"
 
   if (mimetype.startsWith("image/")) {
     return {
