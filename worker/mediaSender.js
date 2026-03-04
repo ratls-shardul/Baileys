@@ -43,8 +43,7 @@ async function sendMessageWithMedia(sock, jid, payload) {
 function canUseCaption(mimeType = "") {
   return (
     mimeType.startsWith("image/") ||
-    mimeType.startsWith("video/") ||
-    mimeType === "application/pdf"
+    mimeType.startsWith("video/")
   )
 }
 
