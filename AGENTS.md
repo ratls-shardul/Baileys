@@ -42,6 +42,7 @@ Important transitions:
 
 - `POST /clients/:clientId` sets up logical client and enqueues `ADD_CLIENT`
 - `401`/logout -> `LOGGED_OUT` + session clear + auto reinit
+- repeated `DISCONNECTED` beyond retry cap -> force session clear + auto reinit for fresh QR
 - `STOP_CLIENT` -> `STOPPED` with no auto-reconnect
 
 ### 3) Stream Consumer Contract

@@ -343,9 +343,25 @@ async function initClient(clientId) {
         const attempt = (reconnectAttempts.get(clientId) || 0) + 1
         reconnectAttempts.set(clientId, attempt)
 
-        // Cap auto-retries to avoid infinite tight loops.
+        // Cap retry loops; then force a fresh auth cycle so QR can be generated again.
         if (attempt > 8) {
-          clientLog(clientId, "error", `🛑 exceeded reconnect attempts (${attempt - 1}), waiting for manual reconnect`)
+          clientLog(
+            clientId,
+            "error",
+            `🛑 exceeded reconnect attempts (${attempt - 1}), forcing fresh session for QR recovery`
+          )
+          reconnectAttempts.delete(clientId)
+          clearSession(clientId)
+          await setClientState(clientId, STATES.CONNECTING)
+          await publishEvent({
+            type: "status",
+            clientId,
+            state: "CONNECTING"
+          })
+          setTimeout(() => {
+            clientLog(clientId, "info", "🔄 Reinitializing after reconnect cap with fresh session")
+            initClient(clientId)
+          }, 1500)
           return
         }
 
