@@ -85,6 +85,7 @@ Redis Lists/Hash/Keys ◄────────── API + Worker share comma
 5. On `401` / logged out: state `LOGGED_OUT`, session cleared, auto reinit for fresh QR.
 6. On `515` after new login: treated as expected restart (state `CONNECTING`, no session reset).
 7. On other disconnects: state `DISCONNECTED`, retry with capped backoff.
+   - if retry cap is exceeded, worker forces a fresh session reset and reinitializes to regenerate QR.
 8. Manual `stop` moves client to `STOPPED` and prevents auto-reconnect.
 
 ### 4.2 Outbound queue guarantees (current)
