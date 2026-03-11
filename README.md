@@ -187,6 +187,7 @@ Capabilities:
 
 Important current defaults:
 
+- API is published on host port `443` and forwarded to container port `3000`.
 - Redis persistence disabled (`--save ""`, `--appendonly no`) -> data is ephemeral on restart
 - Worker logs configured via:
   - `LOG_LEVEL`
@@ -206,13 +207,13 @@ Important current defaults:
 Create client:
 
 ```bash
-curl -X POST http://localhost:3000/clients/client-1
+curl -X POST http://localhost:443/clients/client-1
 ```
 
 Queue text:
 
 ```bash
-curl -X POST http://localhost:3000/messages/send \
+curl -X POST http://localhost:443/messages/send \
   -H "content-type: application/json" \
   -d '{"clientId":"client-1","phoneNumber":"9876543210","text":"hello"}'
 ```
@@ -220,17 +221,17 @@ curl -X POST http://localhost:3000/messages/send \
 View queue:
 
 ```bash
-curl "http://localhost:3000/clients/client-1/queue?limit=20"
+curl "http://localhost:443/clients/client-1/queue?limit=20"
 ```
 
 Clear queue:
 
 ```bash
-curl -X DELETE "http://localhost:3000/clients/client-1/queue"
+curl -X DELETE "http://localhost:443/clients/client-1/queue"
 ```
 
 Check status:
 
 ```bash
-curl http://localhost:3000/clients/client-1/status
+curl http://localhost:443/clients/client-1/status
 ```
