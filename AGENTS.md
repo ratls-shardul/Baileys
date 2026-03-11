@@ -12,6 +12,7 @@ This document is the operational source of truth for agents working in this repo
 
 Services:
 
+- `proxy`: Nginx TLS terminator for HTTPS/WSS origin traffic
 - `worker`: Baileys socket lifecycle + outbound sender loops
 - `api`: Fastify routes + websocket gateway + stream consumer
 - `redis`: command/state/queue/event store

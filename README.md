@@ -2,6 +2,7 @@
 
 Containerized WhatsApp backend with four services:
 
+- `proxy`: Nginx TLS terminator for HTTPS/WSS origin traffic
 - `worker`: runs Baileys sockets (one per `clientId`) and sends queued messages.
 - `api`: Fastify REST + WebSocket endpoints, and Redis stream consumer.
 - `redis`: shared state, command, queue, and event bus.
@@ -12,12 +13,15 @@ Containerized WhatsApp backend with four services:
 ```text
 Client / Frontend
    │
+   ├── REST/HTTPS ───────────────► Proxy (Nginx)
+   │                               └── forwards to API (Fastify)
+   │
    ├── REST ─────────────────────► API (Fastify)
    │                               ├── writes to Redis (commands / queues)
    │                               ├── reads state/QR from Redis
    │                               └── exposes /ws for realtime state/QR
    │
-   └── WebSocket (/ws) ◄───────── wsHub broadcasts
+   └── WebSocket (/ws, WSS) ◄──── wsHub broadcasts
                                    ▲
                                    │
 Redis Stream wa:events:stream ◄── Worker publishes QR/status
@@ -35,6 +39,11 @@ Redis Lists/Hash/Keys ◄────────── API + Worker share comma
 ├── AGENTS.md
 ├── README.md
 ├── docker-compose.yaml
+├── nginx
+│   ├── certs
+│   │   └── .gitkeep
+│   └── conf.d
+│       └── default.conf
 ├── api
 │   ├── index.js
 │   ├── logger.js
@@ -183,17 +192,30 @@ Capabilities:
 
 ## 8) Docker Compose Notes
 
-`docker-compose.yaml` includes `redis`, `worker`, `api`, and `dashboard`.
+`docker-compose.yaml` includes `redis`, `worker`, `api`, `proxy`, and `dashboard`.
 
 Important current defaults:
 
-- API is published on host port `443` and forwarded to container port `3000`.
+- `proxy` terminates TLS on host port `443` using `nginx/certs/origin.crt` and `nginx/certs/origin.key`.
+- `api` remains internal on Docker port `3000`; HTTPS and WSS traffic should enter through `proxy`.
 - Redis persistence disabled (`--save ""`, `--appendonly no`) -> data is ephemeral on restart
 - Worker logs configured via:
   - `LOG_LEVEL`
   - `CLIENT_LOG_LEVEL`
   - `LOG_CLIENTS_DIR=/logs/clients`
   - `SCRUB_SIGNAL_LOGS=true`
+
+Certificate setup:
+
+1. Put your Cloudflare Origin CA certificate at `nginx/certs/origin.crt`
+2. Put the private key at `nginx/certs/origin.key`
+3. Recreate the proxy service:
+
+```bash
+docker compose up -d --force-recreate proxy api
+```
+
+4. Keep Cloudflare SSL/TLS mode on `Full` or `Full (strict)`
 
 ## 9) Known Gaps
 
@@ -207,13 +229,13 @@ Important current defaults:
 Create client:
 
 ```bash
-curl -X POST http://localhost:443/clients/client-1
+curl -k -X POST https://localhost/clients/client-1
 ```
 
 Queue text:
 
 ```bash
-curl -X POST http://localhost:443/messages/send \
+curl -k -X POST https://localhost/messages/send \
   -H "content-type: application/json" \
   -d '{"clientId":"client-1","phoneNumber":"9876543210","text":"hello"}'
 ```
@@ -221,17 +243,17 @@ curl -X POST http://localhost:443/messages/send \
 View queue:
 
 ```bash
-curl "http://localhost:443/clients/client-1/queue?limit=20"
+curl -k "https://localhost/clients/client-1/queue?limit=20"
 ```
 
 Clear queue:
 
 ```bash
-curl -X DELETE "http://localhost:443/clients/client-1/queue"
+curl -k -X DELETE "https://localhost/clients/client-1/queue"
 ```
 
 Check status:
 
 ```bash
-curl http://localhost:443/clients/client-1/status
+curl -k https://localhost/clients/client-1/status
 ```
