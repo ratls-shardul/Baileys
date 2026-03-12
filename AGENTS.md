@@ -43,6 +43,7 @@ Important transitions:
 
 - `POST /clients/:clientId` sets up logical client and enqueues `ADD_CLIENT`
 - `401`/logout -> `LOGGED_OUT` + session clear + auto reinit
+- `405`/`408`/`428` disconnects are treated as recoverable and should preserve the existing session during reconnect attempts
 - repeated `DISCONNECTED` beyond retry cap -> force session clear + auto reinit for fresh QR
 - `STOP_CLIENT` -> `STOPPED` with no auto-reconnect
 

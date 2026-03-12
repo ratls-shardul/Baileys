@@ -323,7 +323,7 @@ async function initClient(clientId) {
         }
 
         // 🌐 Disconnected: retry with backoff.
-        // For 405 connection failures, do NOT clear session each loop.
+        // For recoverable transport failures, preserve session to avoid forced QR churn.
         await setClientState(clientId, STATES.DISCONNECTED)
         await publishEvent({
           type: "status",
@@ -365,14 +365,23 @@ async function initClient(clientId) {
           return
         }
 
-        // Only force fresh session for non-405 disconnects.
-        if (statusCode !== 405) {
+        const shouldPreserveSession =
+          statusCode === 405 ||
+          statusCode === 408 ||
+          statusCode === 428
+
+        // Only force fresh session for disconnects that are likely auth/session corruption.
+        if (!shouldPreserveSession) {
           clearSession(clientId)
         } else {
-          clientLog(clientId, "warn", "⚠️ got 405; preserving session to avoid QR/reset loop")
+          clientLog(
+            clientId,
+            "warn",
+            `⚠️ got ${statusCode}; preserving session to avoid QR/reset loop`
+          )
         }
 
-        const delayMs = statusCode === 405
+        const delayMs = shouldPreserveSession
           ? Math.min(15000 * attempt, 120000)
           : Math.min(3000 * attempt, 30000)
 

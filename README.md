@@ -94,6 +94,7 @@ Redis Lists/Hash/Keys ◄────────── API + Worker share comma
 5. On `401` / logged out: state `LOGGED_OUT`, session cleared, auto reinit for fresh QR.
 6. On `515` after new login: treated as expected restart (state `CONNECTING`, no session reset).
 7. On other disconnects: state `DISCONNECTED`, retry with capped backoff.
+   - transport/time-out disconnects such as `405`, `408`, and `428` preserve the existing session during retries to avoid unnecessary QR churn.
    - if retry cap is exceeded, worker forces a fresh session reset and reinitializes to regenerate QR.
 8. Manual `stop` moves client to `STOPPED` and prevents auto-reconnect.
 
@@ -216,6 +217,52 @@ docker compose up -d --force-recreate proxy api
 ```
 
 4. Keep Cloudflare SSL/TLS mode on `Full` or `Full (strict)`
+
+Create the files directly on the EC2 instance:
+
+```bash
+mkdir -p nginx/certs
+nano nginx/certs/origin.crt
+```
+
+Paste the full Cloudflare Origin Certificate content, save, then create the key:
+
+```bash
+nano nginx/certs/origin.key
+```
+
+Paste the full private key content and save.
+
+If you prefer shell redirection instead of an editor:
+
+```bash
+cat > nginx/certs/origin.crt <<'EOF'
+-----BEGIN CERTIFICATE-----
+PASTE_YOUR_CLOUDFLARE_ORIGIN_CERTIFICATE_HERE
+-----END CERTIFICATE-----
+EOF
+```
+
+```bash
+cat > nginx/certs/origin.key <<'EOF'
+-----BEGIN PRIVATE KEY-----
+PASTE_YOUR_PRIVATE_KEY_HERE
+-----END PRIVATE KEY-----
+EOF
+```
+
+Recommended permissions:
+
+```bash
+chmod 600 nginx/certs/origin.key
+chmod 644 nginx/certs/origin.crt
+```
+
+Verify the files exist before restarting:
+
+```bash
+ls -l nginx/certs
+```
 
 ## 9) Known Gaps
 
