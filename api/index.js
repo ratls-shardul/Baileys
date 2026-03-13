@@ -14,8 +14,6 @@ const start = async () => {
     fastify.register(require("./routes/messages"))
     fastify.register(require("./routes/debug-routes"))
 
-    // require("./redisSubscriber")
-
     const { startConsumer } = require("./streamConsumer")
     startConsumer().catch(err => {
       error("❌ Stream consumer failed to start:", err && err.message ? err.message : err)

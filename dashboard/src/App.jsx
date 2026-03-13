@@ -11,6 +11,10 @@ function App() {
   const [clientStates, setClientStates] = useState({})
   const [activeClients, setActiveClients] = useState([])
   const [wsStats, setWsStats] = useState({})
+  const [sendDelay, setSendDelay] = useState({ minMs: 3000, maxMs: 8000, source: "default" })
+  const [sendDelayForm, setSendDelayForm] = useState({ minMs: "3000", maxMs: "8000" })
+  const [sendDelaySaving, setSendDelaySaving] = useState(false)
+  const [sendDelayError, setSendDelayError] = useState("")
   const [logs, setLogs] = useState("")
   const [logService, setLogService] = useState("worker")
   const [logTail, setLogTail] = useState(200)
@@ -75,6 +79,32 @@ function App() {
 
   useEffect(() => {
     localStorage.setItem("apiBase", apiBase)
+  }, [apiBase])
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadSendDelay() {
+      try {
+        const data = await apiGet("/config/send-delay")
+        if (cancelled) return
+        setSendDelay(data)
+        setSendDelayForm({
+          minMs: String(data.minMs ?? 3000),
+          maxMs: String(data.maxMs ?? 8000)
+        })
+        setSendDelayError("")
+      } catch (err) {
+        if (!cancelled) {
+          setSendDelayError("Failed to load send delay config")
+        }
+      }
+    }
+
+    loadSendDelay()
+    return () => {
+      cancelled = true
+    }
   }, [apiBase])
 
   async function fetchLogs() {
@@ -163,6 +193,30 @@ function App() {
     setSendForm({ clientId: "", phoneNumber: "", text: "" })
   }
 
+  async function saveSendDelay() {
+    setSendDelaySaving(true)
+    setSendDelayError("")
+    try {
+      const data = await apiPost("/config/send-delay", {
+        minMs: Number(sendDelayForm.minMs),
+        maxMs: Number(sendDelayForm.maxMs)
+      })
+      setSendDelay({
+        minMs: data.minMs,
+        maxMs: data.maxMs,
+        source: "redis"
+      })
+      setSendDelayForm({
+        minMs: String(data.minMs),
+        maxMs: String(data.maxMs)
+      })
+    } catch (err) {
+      setSendDelayError("Failed to save send delay config")
+    } finally {
+      setSendDelaySaving(false)
+    }
+  }
+
   const sortedClients = [...clients].sort((a, b) => a.localeCompare(b))
 
   return (
@@ -236,6 +290,33 @@ function App() {
             placeholder="message text"
           />
           <button onClick={sendTestMessage}>Queue Message</button>
+        </div>
+
+        <div className="card">
+          <div className="section-title">Send Delay</div>
+          <input
+            type="number"
+            min="500"
+            max="120000"
+            value={sendDelayForm.minMs}
+            onChange={(e) => setSendDelayForm({ ...sendDelayForm, minMs: e.target.value })}
+            placeholder="min delay ms"
+          />
+          <input
+            type="number"
+            min="500"
+            max="120000"
+            value={sendDelayForm.maxMs}
+            onChange={(e) => setSendDelayForm({ ...sendDelayForm, maxMs: e.target.value })}
+            placeholder="max delay ms"
+          />
+          <div className="meta">
+            Active: {sendDelay.minMs}ms - {sendDelay.maxMs}ms ({sendDelay.source})
+          </div>
+          {sendDelayError && <div className="queue-error">{sendDelayError}</div>}
+          <button onClick={saveSendDelay} disabled={sendDelaySaving}>
+            {sendDelaySaving ? "Saving..." : "Save Delay"}
+          </button>
         </div>
       </section>
 

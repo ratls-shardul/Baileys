@@ -23,14 +23,6 @@ async function setClientState(clientId, state) {
   clientLog(clientId, "info", `📊 state → ${state}`)
 }
 
-async function getClientState(clientId) {
-  return (await redis.hget(KEY, clientId)) || STATES.CREATED
-}
-
-async function getAllClientStates() {
-  return await redis.hgetall(KEY)
-}
-
 async function removeClientState(clientId) {
   await redis.hdel(KEY, clientId)
 }
@@ -38,7 +30,5 @@ async function removeClientState(clientId) {
 module.exports = {
   STATES,
   setClientState,
-  getClientState,
-  getAllClientStates,
   removeClientState
 }

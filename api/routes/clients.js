@@ -1,7 +1,12 @@
 const redis = require("../redis")
 
 const STATE_KEY = "wa:clients:state"
+const SEND_DELAY_CONFIG_KEY = "wa:config:sendDelay"
 const CLIENT_ID_RE = /^[a-zA-Z0-9._:-]{1,120}$/
+const DEFAULT_SEND_DELAY_MIN_MS = 3000
+const DEFAULT_SEND_DELAY_MAX_MS = 8000
+const MIN_ALLOWED_SEND_DELAY_MS = 500
+const MAX_ALLOWED_SEND_DELAY_MS = 120000
 
 module.exports = async function (fastify) {
   function parseQueueEntry(raw, index) {
@@ -12,8 +17,77 @@ module.exports = async function (fastify) {
     }
   }
 
+  function normalizeSendDelayConfig(value) {
+    const minMs = Number(value && value.minMs)
+    const maxMs = Number(value && value.maxMs)
+
+    if (!Number.isFinite(minMs) || !Number.isFinite(maxMs)) {
+      return null
+    }
+
+    const normalizedMin = Math.max(MIN_ALLOWED_SEND_DELAY_MS, Math.floor(minMs))
+    const normalizedMax = Math.min(MAX_ALLOWED_SEND_DELAY_MS, Math.floor(maxMs))
+
+    if (normalizedMax < normalizedMin) {
+      return null
+    }
+
+    return {
+      minMs: normalizedMin,
+      maxMs: normalizedMax
+    }
+  }
+
+  async function readSendDelayConfig() {
+    try {
+      const raw = await redis.get(SEND_DELAY_CONFIG_KEY)
+      if (!raw) {
+        return {
+          minMs: DEFAULT_SEND_DELAY_MIN_MS,
+          maxMs: DEFAULT_SEND_DELAY_MAX_MS,
+          source: "default"
+        }
+      }
+
+      const parsed = JSON.parse(raw)
+      const normalized = normalizeSendDelayConfig(parsed)
+      if (normalized) {
+        return {
+          ...normalized,
+          source: "redis"
+        }
+      }
+    } catch {}
+
+    return {
+      minMs: DEFAULT_SEND_DELAY_MIN_MS,
+      maxMs: DEFAULT_SEND_DELAY_MAX_MS,
+      source: "default"
+    }
+  }
+
   fastify.get("/clients", async () => {
     return await redis.hgetall(STATE_KEY)
+  })
+
+  fastify.get("/config/send-delay", async () => {
+    return await readSendDelayConfig()
+  })
+
+  fastify.post("/config/send-delay", async (req, res) => {
+    const normalized = normalizeSendDelayConfig(req.body && typeof req.body === "object" ? req.body : null)
+    if (!normalized) {
+      return res.code(400).send({
+        error: `minMs and maxMs are required integers with ${MIN_ALLOWED_SEND_DELAY_MS} <= minMs <= maxMs <= ${MAX_ALLOWED_SEND_DELAY_MS}`
+      })
+    }
+
+    await redis.set(SEND_DELAY_CONFIG_KEY, JSON.stringify(normalized))
+
+    return {
+      ok: true,
+      ...normalized
+    }
   })
 
   fastify.post("/clients/:clientId", async (req, res) => {
@@ -128,20 +202,18 @@ module.exports = async function (fastify) {
   })
 
   fastify.get("/clients/:clientId/status", async (req, res) => {
-  const { clientId } = req.params;
+    const { clientId } = req.params
+    const state = await redis.hget(STATE_KEY, clientId)
 
-  const state = await redis.hget(STATE_KEY, clientId);
+    if (!state) {
+      return {
+        clientId,
+        state: "NON_EXISTENT"
+      }
+    }
 
-  if (!state) {
     return {
-      clientId,
-      state: "NON_EXISTENT"
-    };
-  }
-
-  return {
-    state
-  };
-});
-
+      state
+    }
+  })
 }

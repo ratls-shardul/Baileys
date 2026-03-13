@@ -6,11 +6,16 @@ const { clearSession } = require("./sessionUtils")
 const { STATES, setClientState, removeClientState } = require("./clientState")
 const Redis = require("ioredis")
 const { sendMessageWithMedia } = require("./mediaSender")
-const { info, warn, error, debug, clientLog } = require("./logger")
+const { info, warn, error, clientLog } = require("./logger")
 
 const WA_DEVICE_NAME = process.env.WA_DEVICE_NAME || "Admissions - CRM"
 const WA_DEVICE_PLATFORM = process.env.WA_DEVICE_PLATFORM || "Linux"
 const WA_DEVICE_VERSION = process.env.WA_DEVICE_VERSION || "120.0.0"
+const SEND_DELAY_CONFIG_KEY = "wa:config:sendDelay"
+const DEFAULT_SEND_DELAY_MIN_MS = 3000
+const DEFAULT_SEND_DELAY_MAX_MS = 8000
+const MIN_ALLOWED_SEND_DELAY_MS = 500
+const MAX_ALLOWED_SEND_DELAY_MS = 120000
 
 // Separate Redis connections to prevent blocking
 const redis = new Redis({
@@ -73,11 +78,6 @@ async function markInactive(clientId) {
     await redis.srem("wa:clients:active", clientId)
   } catch {}
 }
-
-
-// let isBooting = true
-// const bootingClients = new Set()
-
 async function publishEvent(event) {
   const startTime = Date.now()
   info("📤 PUBLISHING EVENT to stream:", event)
@@ -152,7 +152,6 @@ async function initClient(clientId) {
 
     const sock = makeWASocket({
       auth: state,
-      // logger: Pino({ level: "debug" }),
       logger: Pino({ level: "silent" }).child({level: "silent" }),
       printQRInTerminal: false,
       markOnlineOnConnect: false,
@@ -211,8 +210,6 @@ async function initClient(clientId) {
 
         connectedClients.add(clientId)
 
-        // bootingClients.delete(clientId)
-
         clientLog(clientId, "info", "✅ connected successfully")
 
         setTimeout(() => {
@@ -241,7 +238,6 @@ async function initClient(clientId) {
 
           sockets.delete(clientId)
           await markInactive(clientId)
-          await markInactive(clientId)
           return
         }
         const statusCode =
@@ -249,11 +245,6 @@ async function initClient(clientId) {
           lastDisconnect?.error?.output?.payload?.statusCode
         const sawRecentNewLogin =
           Date.now() - (recentNewLoginAt.get(clientId) || 0) < 60_000
-
-        // if (statusCode === undefined && bootingClients.has(clientId)) {
-        //   console.log(`🟡 ${clientId} waiting for QR...`)
-        //   return
-        // }
 
         clientLog(clientId, "warn", `❌ disconnected (${statusCode})`)
 
@@ -403,6 +394,52 @@ function randomBetween(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min
 }
 
+function normalizeSendDelayConfig(value) {
+  const minMs = Number(value && value.minMs)
+  const maxMs = Number(value && value.maxMs)
+
+  if (!Number.isFinite(minMs) || !Number.isFinite(maxMs)) {
+    return null
+  }
+
+  const normalizedMin = Math.max(MIN_ALLOWED_SEND_DELAY_MS, Math.floor(minMs))
+  const normalizedMax = Math.min(MAX_ALLOWED_SEND_DELAY_MS, Math.floor(maxMs))
+
+  if (normalizedMax < normalizedMin) {
+    return null
+  }
+
+  return {
+    minMs: normalizedMin,
+    maxMs: normalizedMax
+  }
+}
+
+async function getSendDelayConfig() {
+  try {
+    const raw = await redis.get(SEND_DELAY_CONFIG_KEY)
+    if (!raw) {
+      return {
+        minMs: DEFAULT_SEND_DELAY_MIN_MS,
+        maxMs: DEFAULT_SEND_DELAY_MAX_MS
+      }
+    }
+
+    const parsed = JSON.parse(raw)
+    const normalized = normalizeSendDelayConfig(parsed)
+    if (normalized) {
+      return normalized
+    }
+  } catch (err) {
+    warn(`⚠️ Failed to load send delay config, using defaults: ${err.message}`)
+  }
+
+  return {
+    minMs: DEFAULT_SEND_DELAY_MIN_MS,
+    maxMs: DEFAULT_SEND_DELAY_MAX_MS
+  }
+}
+
 async function startSenderLoop(clientId) {
   if (senderLoops.has(clientId)) return
 
@@ -457,8 +494,8 @@ async function startSenderLoop(clientId) {
         continue
       }
 
-      // 🎲 RANDOM DELAY AFTER SEND
-      await sleep(randomBetween(2000, 5000))
+      const sendDelay = await getSendDelayConfig()
+      await sleep(randomBetween(sendDelay.minMs, sendDelay.maxMs))
     } catch (err) {
       if (senderStopFlags.get(clientId)) {
         break
@@ -471,14 +508,6 @@ async function startSenderLoop(clientId) {
   senderLoops.delete(clientId)
   senderStopFlags.delete(clientId)
   senderRedisClients.delete(clientId)
-}
-
-function getClient(clientId) {
-  return sockets.get(clientId)
-}
-
-function listClients() {
-  return [...sockets.keys()]
 }
 
 function stopSenderLoop(clientId) {
@@ -585,8 +614,6 @@ async function deleteClient(clientId) {
 
 module.exports = {
   initClient,
-  getClient,
-  listClients,
   startSenderLoop,
   restartClient,
   stopClient,
