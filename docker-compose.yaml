@@ -23,7 +23,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 200M
           cpus: '0.5'
 
   worker:
@@ -60,7 +60,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 100M
 
   proxy:
     image: nginx:1.27-alpine
@@ -73,6 +73,10 @@ services:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
       - ./nginx/certs:/etc/nginx/certs:ro
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 100M
 
   dashboard:
     build: ./dashboard
@@ -88,6 +92,10 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 100M
 
 volumes:
   redis-data:
