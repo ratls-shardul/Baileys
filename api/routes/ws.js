@@ -1,6 +1,6 @@
 const { register } = require("../wsHub")
 const redis = require("../redis")
-const { info, warn, error, debug } = require("../logger")
+const { warn, error } = require("../logger")
 
 async function sendClientSnapshot(socket, clientId) {
   const state = await redis.hget("wa:clients:state", clientId)
@@ -10,9 +10,6 @@ async function sendClientSnapshot(socket, clientId) {
     clientId,
     state: state || "NON_EXISTENT"
   }))
-
-  debug(`📤 Sent status: ${state || "NON_EXISTENT"} for ${clientId}`)
-
   const qr = await redis.get(`wa:qr:${clientId}`)
   if (qr) {
     socket.send(JSON.stringify({
@@ -20,7 +17,6 @@ async function sendClientSnapshot(socket, clientId) {
       clientId,
       qr
     }))
-    debug(`📤 Sent QR for ${clientId}`)
   }
 }
 
@@ -29,7 +25,6 @@ module.exports = async function (fastify) {
     
     let registered = false
     let clientId = null
-    let lastPing = Date.now()
 
     socket.on("message", async (raw) => {
       try {
@@ -49,7 +44,6 @@ module.exports = async function (fastify) {
           register(clientId, socket)
           registered = true
           justRegistered = true
-          info(`✅ WebSocket registered for ${clientId}`)
         }
 
         if (justRegistered) {
@@ -58,8 +52,6 @@ module.exports = async function (fastify) {
 
         // Handle ping messages
         if (data.type === 'ping') {
-          lastPing = Date.now()
-          debug(`💓 Ping from ${clientId}`)
           // Optional: Send pong response
           socket.send(JSON.stringify({
             type: 'pong',
@@ -75,18 +67,10 @@ module.exports = async function (fastify) {
       }
     })
 
-    socket.on("close", (code, reason) => {
-      info(`🔌 WebSocket closed for ${clientId || 'unknown'}`)
-      debug(`   Close code: ${code}`)
-      debug(`   Close reason: ${reason || 'none'}`)
-      debug(`   Was registered: ${registered}`)
-      debug(`   Last ping: ${Date.now() - lastPing}ms ago`)
-    })
+    socket.on("close", () => {})
 
     socket.on("error", (err) => {
       error(`❌ WebSocket error for ${clientId || 'unknown'}:`, err.message)
     })
-    
-    info("🔌 New WebSocket connection established")
   })
 }

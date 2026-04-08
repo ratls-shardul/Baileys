@@ -6,9 +6,7 @@ let redis = new Redis({
   host: process.env.REDIS_HOST || "redis",
   port: 6379,
   retryStrategy(times) {
-    const delay = Math.min(times * 100, 2000)
-    warn(`🔁 Redis stream consumer retry #${times}, delay ${delay}ms`)
-    return delay
+    return Math.min(times * 100, 2000)
   }
 })
 
@@ -31,24 +29,16 @@ const messageFailures = new Map()
  */
 async function initializeConsumerGroup() {
   try {
-    info(`📡 Initializing consumer group: ${CONSUMER_GROUP}`)
-    
-    // Try to create consumer group
-    // $ means "start from new messages only"
-    // MKSTREAM creates the stream if it doesn't exist
     await redis.xgroup(
       'CREATE',
       STREAM_KEY,
       CONSUMER_GROUP,
-      '$',  // Start reading from new messages
+      '$',
       'MKSTREAM'
     )
-    
-    info(`✅ Consumer group '${CONSUMER_GROUP}' created successfully`)
   } catch (err) {
     if (err.message.includes('BUSYGROUP')) {
-      // Group already exists - this is fine
-      info(`✅ Consumer group '${CONSUMER_GROUP}' already exists`)
+      return
     } else {
       error(`❌ Failed to create consumer group:`, err && err.message ? err.message : err)
       throw err
@@ -81,13 +71,6 @@ async function processMessage(messageId, fields) {
     if (!event || typeof event !== "object" || !event.clientId || !event.type) {
       return { ok: false, error: "Invalid event payload shape" }
     }
-    
-    debug(`📨 STREAM MESSAGE [${messageId}]`)
-    debug(`   Type: ${event.type}`)
-    debug(`   State: ${event.state || 'N/A'}`)
-    debug(`   ClientId: ${event.clientId}`)
-    
-    // Broadcast to WebSocket clients
     broadcast(event.clientId, event)
     
     return { ok: true }
@@ -104,9 +87,7 @@ async function processMessage(messageId, fields) {
 async function acknowledgeMessage(messageId) {
   try {
     const result = await redis.xack(STREAM_KEY, CONSUMER_GROUP, messageId)
-    if (result === 1) {
-      debug(`✅ Message acknowledged: ${messageId}`)
-    } else {
+    if (result !== 1) {
       warn(`⚠️ Message acknowledge returned ${result}: ${messageId}`)
     }
     return result
@@ -161,10 +142,6 @@ async function handleProcessResult(messageId, fields, result, source = "new") {
  */
 async function processPendingMessages() {
   try {
-    debug(`🔍 Checking for pending messages...`)
-    
-    // Read pending messages for this consumer
-    // 0 means start from oldest pending
     const pending = await redis.xreadgroup(
       'GROUP', CONSUMER_GROUP, CONSUMER_NAME,
       'COUNT', 10,
@@ -172,21 +149,17 @@ async function processPendingMessages() {
     )
     
     if (!pending || pending.length === 0) {
-      debug(`   No pending messages`)
       return 0
     }
     
     let processed = 0
     for (const [stream, entries] of pending) {
       for (const [messageId, fields] of entries) {
-        debug(`📦 Processing pending message: ${messageId}`)
         const result = await processMessage(messageId, fields)
         const ok = await handleProcessResult(messageId, fields, result, "own-pending")
         if (ok) processed++
       }
     }
-    
-    info(`✅ Processed ${processed} pending messages`)
     return processed
   } catch (err) {
     error(`❌ Error processing pending messages:`, err && err.message ? err.message : err)
@@ -196,7 +169,6 @@ async function processPendingMessages() {
 
 async function claimAndProcessStalePendingMessages() {
   try {
-    debug(`🧲 Claiming stale pending messages (idle >= ${AUTOCLAIM_MIN_IDLE_MS}ms)...`)
     let startId = "0-0"
     let claimed = 0
 
@@ -225,10 +197,6 @@ async function claimAndProcessStalePendingMessages() {
       if (nextStartId === startId) break
       startId = nextStartId
     }
-
-    if (claimed > 0) {
-      info(`✅ Claimed and processed ${claimed} stale pending messages`)
-    }
     return claimed
   } catch (err) {
     error(`❌ Error during XAUTOCLAIM recovery:`, err && err.message ? err.message : err)
@@ -247,7 +215,7 @@ async function startConsumer() {
   }
   
   consumerRunning = true
-  info(`🚀 Starting Redis Streams consumer: ${CONSUMER_NAME}`)
+  info(`🚀 Starting Redis Streams consumer`)
   
   try {
     // Initialize consumer group
@@ -263,30 +231,18 @@ async function startConsumer() {
     // Main consumer loop
     while (consumerRunning) {
       try {
-        // Read new messages
-        // BLOCK 1000 = wait up to 1 second for new messages (reduced from 5000)
-        // COUNT 10 = read up to 10 messages at once
-        // > means "only new undelivered messages"
         const messages = await redis.xreadgroup(
           'GROUP', CONSUMER_GROUP, CONSUMER_NAME,
-          'BLOCK', 1000,  // Block for 1 second (faster response)
-          'COUNT', 10,     // Read up to 10 messages
+          'BLOCK', 1000,
+          'COUNT', 10,
           'STREAMS', STREAM_KEY, '>'
         )
         
         if (!messages || messages.length === 0) {
-          // No messages, loop will continue after timeout
-          // Log heartbeat every 30 seconds
-          if (Date.now() % 30000 < 1000) {
-            debug(`💓 Stream consumer heartbeat - waiting for messages...`)
-          }
           continue
         }
         
-        // Process all received messages
         for (const [stream, entries] of messages) {
-          debug(`📬 Received ${entries.length} new messages`)
-          
           for (const [messageId, fields] of entries) {
             const result = await processMessage(messageId, fields)
             await handleProcessResult(messageId, fields, result, "new")
@@ -298,16 +254,14 @@ async function startConsumer() {
           error(`❌ Consumer group disappeared, reinitializing...`)
           await initializeConsumerGroup()
         } else if (err.message && err.message.includes('timeout')) {
-          warn(`⚠️ Redis timeout, continuing...`)
+          continue
         } else if (err.message && err.message.includes('ECONNREFUSED')) {
           error(`❌ Redis connection refused, retrying in 2s...`)
           await new Promise(resolve => setTimeout(resolve, 2000))
         } else {
           error(`❌ Error in consumer loop:`, err.message)
-          error(`   Stack:`, err.stack)
         }
-        
-        // Wait before retrying
+
         await new Promise(resolve => setTimeout(resolve, 500))
       }
     }

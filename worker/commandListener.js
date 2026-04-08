@@ -15,31 +15,26 @@ async function startCommandListener() {
       const res = await redis.brpop("wa:commands", 0)
 
       const payload = JSON.parse(res[1])
-      info("📥 Received command:", payload)
 
       switch (payload.type) {
         case "ADD_CLIENT": {
-          info(`➕ Adding client ${payload.clientId}`)
           await initClient(payload.clientId)
           break
         }
 
         case "RESTART_CLIENT": {
           const resetSession = Boolean(payload.resetSession)
-          info(`🔁 Restarting client ${payload.clientId} (resetSession=${resetSession})`)
           await restartClient(payload.clientId, { resetSession })
           break
         }
 
         case "STOP_CLIENT": {
           const resetSession = Boolean(payload.resetSession)
-          info(`⏹️ Stopping client ${payload.clientId} (resetSession=${resetSession})`)
           await stopClient(payload.clientId, { resetSession })
           break
         }
 
         case "DELETE_CLIENT": {
-          info(`🧨 Deleting client ${payload.clientId}`)
           await deleteClient(payload.clientId)
           break
         }
