@@ -72,6 +72,15 @@ if (process.env.SCRUB_SIGNAL_LOGS === "true") {
   console.error = (...args) => {
     if (!shouldDrop(args)) origError(...args)
   }
+
+  // Intercept process.stdout.write as a safety net for any Baileys code paths
+  // that bypass console.* and write signal session data directly to stdout.
+  const origStdoutWrite = process.stdout.write.bind(process.stdout)
+  process.stdout.write = (chunk, ...rest) => {
+    const str = typeof chunk === "string" ? chunk : chunk.toString("utf8")
+    if (SENSITIVE_TOKENS.some((t) => str.includes(t))) return true
+    return origStdoutWrite(chunk, ...rest)
+  }
 }
 
 const { startCommandListener } = require("./commandListener")

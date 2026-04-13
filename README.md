@@ -16,6 +16,7 @@ For each client, the platform can:
 - send queued jobs only while the client is connected
 - restart, stop, reconnect, or delete clients
 - inspect queues and logs from the dashboard
+- record a per-client message log (sent and failed) with a 7-day TTL
 
 The architecture is deliberately split into control-plane and execution-plane services:
 
@@ -68,6 +69,7 @@ Think of the codebase in terms of three flows:
 │   ├── mediaSender.js
 │   ├── sessionUtils.js
 │   ├── socketManager.js
+│   ├── startupRehydrate.js
 │   └── tests/
 ├── dashboard/
 │   ├── server/index.js
@@ -105,6 +107,10 @@ Important implementation details:
 - worker startup rehydrates clients from Redis state plus persisted `/sessions` folders, skipping `STOPPED` and `LOGGED_OUT`
 - one dedicated Redis connection is used per sender loop because `BRPOP` is blocking
 - a separate Redis publisher connection is used for stream publishing to reduce interference with other worker operations
+- one Pino logger instance is created per `clientId` and reused across reconnects (stored in `clientPinoLoggers` Map); avoids accumulating logger instances on frequent reconnects
+- each Baileys socket receives a fresh bounded `msgRetryCounterCache` (max 500 entries, FIFO eviction) via `BoundedCache`; prevents unbounded growth of the default internal cache under high message volume
+- after each send attempt (success or failure) the worker writes a structured log entry to `wa:msglog:<clientId>` and trims entries older than 7 days inline; logging errors are caught and warned, never propagated to delivery
+- `SCRUB_SIGNAL_LOGS=true` suppresses Baileys Signal protocol session lifecycle output at both the `console.*` and `process.stdout.write` levels
 
 ### 4.2 `api`
 
@@ -147,6 +153,7 @@ Responsibilities:
 - send-delay configuration UI
 - basic message enqueue form
 - container log viewer through Docker socket access
+- per-client message log viewer (sent and failed sends, 7-day history)
 
 Important implementation details:
 
@@ -192,6 +199,14 @@ These keys are the runtime contracts the rest of the code assumes:
 - `wa:config:sendDelay`
   Redis JSON string with runtime send-delay config:
   `{ "minMs": number, "maxMs": number }`
+
+- `wa:msglog:<clientId>`
+  Redis sorted set of message log entries for one client.
+  Score is Unix timestamp in ms. Member is a JSON string:
+  `{ phoneNumber, sentAt, status, text, fileCount, failReason? }`
+  `status` is `"sent"` or `"failed"`. `failReason` is present only on failures.
+  Entries older than 7 days are trimmed inline on each write.
+  This key is intentionally NOT deleted when a client is deleted — it expires naturally via TTL trimming.
 
 ## 6) Client States
 
@@ -364,6 +379,7 @@ If reconnect attempts exceed 8:
 - removes the client from `wa:clients:state`
 - clears session files
 - publishes a `DELETED` status event
+- does NOT delete `wa:msglog:<clientId>` — message history is kept until TTL trimming removes all entries
 
 ## 9) Outbound Queue Contract
 
@@ -628,7 +644,30 @@ Broadcast model:
   - deletes the Redis list for that client
   - returns how many items were cleared
 
-### 13.5 Debug
+### 13.5 Message Logs
+
+- `GET /clients/:clientId/messages/log?limit=<1..200>&before=<timestamp_ms>`
+  - reads from `wa:msglog:<clientId>` sorted set
+  - returns entries newest-first
+  - query params:
+    - `limit`: number of entries to return (default `50`, min `1`, max `200`)
+    - `before`: only return entries with score ≤ this Unix timestamp in ms (default `+inf`)
+  - returns:
+    - `clientId`
+    - `total`: total number of entries in the sorted set
+    - `returned`: entries returned in this response
+    - `limit`: effective limit used
+    - `messages`: array of log entries
+  - each `messages[]` entry includes:
+    - `phoneNumber`
+    - `sentAt` (Unix ms timestamp)
+    - `status`: `"sent"` or `"failed"`
+    - `text`
+    - `fileCount`
+    - `failReason` (only present for `"failed"` entries)
+  - malformed stored entries are returned as `{ raw, parseError: true }` rather than throwing
+
+### 13.6 Debug
 
 - `GET /debug/ws-stats`
 - `GET /debug/client-states`
@@ -660,6 +699,11 @@ It currently supports:
   - active sockets
   - websocket connections
 - log tailing for `worker`, `api`, `redis`, `dashboard`
+- per-client message log viewer:
+  - "View Logs" button on each client row loads the most recent 100 entries
+  - displayed in a "Message Logs" tab alongside the "Client Queue" tab
+  - each entry shows: status badge (sent/failed), phone number, file count, timestamp, message text, and fail reason (failed entries only)
+  - manual lookup by arbitrary `clientId` supported via the log tab input
 
 Polling behavior:
 
@@ -670,6 +714,7 @@ Operational UX contract already assumed in the repo:
 - client row is the primary control area
 - no duplicate bottom action block
 - queue panel supports arbitrary `clientId` lookup, even for clients not created yet
+- message log panel supports arbitrary `clientId` lookup, even for clients not currently active
 
 ## 15) Docker Compose Defaults
 
@@ -744,6 +789,7 @@ Current automated tests live in:
 
 - `api/tests/clients.routes.test.js`
 - `api/tests/messages.routes.test.js`
+- `api/tests/messageLogs.routes.test.js`
 - `api/tests/streamConsumer.test.js`
 - `worker/tests/socketManager.test.js`
 - `worker/tests/startupRehydrate.test.js`
@@ -759,6 +805,10 @@ What is covered today:
 - disconnect handling for `401`, `405`, `408`, `428`, ordinary disconnect retries, retry-cap session persistence, and sender-loop requeue behavior
 - worker startup rehydration from Redis state and session folders
 - sender-loop requeue-on-send-failure behavior
+- message log write on successful send (zadd + zremrangebyscore trim)
+- message log write on send failure with `failReason`
+- message log errors do not block delivery or requeue
+- message log API: empty client, newest-first ordering, default/min/max limit, total vs returned, `before` cursor pagination, failed entry with `failReason`, sent entry without `failReason`, malformed entry handling, full field shape
 
 How to run tests:
 
@@ -831,6 +881,18 @@ Clear queue:
 curl -k -X DELETE "https://localhost/clients/client-1/queue"
 ```
 
+View message logs (most recent 50):
+
+```bash
+curl -k "https://localhost/clients/client-1/messages/log"
+```
+
+View message logs with custom limit and cursor:
+
+```bash
+curl -k "https://localhost/clients/client-1/messages/log?limit=100&before=1712345678000"
+```
+
 ## 21) Change Rules For Future Work
 
 If you change queue, state, or event behavior:
@@ -840,5 +902,7 @@ If you change queue, state, or event behavior:
 - do not silently change the dequeue-while-disconnected contract
 - do not silently remove requeue-on-send-failure behavior
 - do not silently alter reconnect semantics for `401`, ordinary disconnect retries, `405`, `408`, `428`, or retry-cap session persistence
+- do not silently remove or bypass the `logMessage` call on send success or send failure — message log entries are expected for every dequeued job
+- do not delete `wa:msglog:<clientId>` from `deleteClient` — log history is retained until TTL trimming removes all entries
 
 This repository relies on those behaviors operationally.

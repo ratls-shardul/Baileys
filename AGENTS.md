@@ -106,7 +106,18 @@ Important transitions:
 
 ---
 
-### 3) Stream Consumer Contract
+### 3) Message Log Contract
+
+Must remain true unless explicitly approved otherwise:
+
+1. Every dequeued job must produce a `wa:msglog:<clientId>` entry — on success (`status: "sent"`) and on failure (`status: "failed"`, with `failReason`).
+2. Logging errors must be caught and warned; they must never propagate to delivery or requeue logic.
+3. `deleteClient` must NOT delete `wa:msglog:<clientId>` — message history persists until TTL trimming removes all entries.
+4. Entries older than 7 days are trimmed inline via `ZREMRANGEBYSCORE` on every write.
+
+---
+
+### 4) Stream Consumer Contract
 
 `api/streamConsumer.js` must:
 
@@ -132,6 +143,10 @@ Important transitions:
 - Queue endpoints:
   - `GET /clients/:clientId/queue`
   - `DELETE /clients/:clientId/queue`
+- Message log endpoint:
+  - `GET /clients/:clientId/messages/log?limit=<1..200>&before=<timestamp_ms>`
+  - returns `{ clientId, total, returned, limit, messages[] }` newest-first
+  - malformed entries returned as `{ raw, parseError: true }` — never throws
 
 ---
 
@@ -142,6 +157,10 @@ Important transitions:
 - Queue panel supports:
   - per-row queue view/clear
   - manual queue lookup by arbitrary `clientId` (including non-initialized clients)
+- Message log panel (separate tab from queue):
+  - "View Logs" on client row loads the most recent 100 entries
+  - manual lookup by arbitrary `clientId` supported
+  - status badge distinguishes `sent` vs `failed` visually
 
 ---
 
@@ -155,6 +174,7 @@ Important transitions:
 - `wa:events:stream`
 - `wa:events:dlq`
 - `wa:config:sendDelay`
+- `wa:msglog:<clientId>` — Redis sorted set; score = Unix ms timestamp; member = JSON `{ phoneNumber, sentAt, status, text, fileCount, failReason? }`; entries older than 7 days are trimmed inline on each write; NOT deleted on client delete
 
 ---
 
@@ -167,7 +187,7 @@ Important transitions:
 5. `api/routes/clients.js`
 6. `api/routes/messages.js`
 7. `dashboard/src/App.jsx`
-8. `api/tests/*.test.js`
+8. `api/tests/*.test.js` (includes `messageLogs.routes.test.js`)
 9. `worker/tests/*.test.js`
 
 ---
@@ -191,6 +211,9 @@ When changing queue/state/event behavior:
   - API config, client, queue, and message validation routes
   - stream consumer payload validation, ack flow, and DLQ handling
   - worker disconnect handling for `401`, `405`, `408`, `428`, ordinary disconnect retries, retry-cap persistence, sender-loop requeue behavior, and startup rehydration
+  - message log write on successful send and on failure (including `failReason`)
+  - message log errors do not block delivery or requeue
+  - message log API: pagination, limit clamping, `before` cursor, field shapes, malformed-entry handling
 - Prefer adding focused tests beside the changed surface before expanding broader integration coverage.
 
 ---
