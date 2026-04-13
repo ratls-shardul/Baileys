@@ -16,6 +16,7 @@ const DEFAULT_SEND_DELAY_MIN_MS = 3000
 const DEFAULT_SEND_DELAY_MAX_MS = 8000
 const MIN_ALLOWED_SEND_DELAY_MS = 500
 const MAX_ALLOWED_SEND_DELAY_MS = 120000
+const MSGLOG_TTL_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
 
 // Separate Redis connections to prevent blocking
 const redis = new Redis({
@@ -57,6 +58,24 @@ async function ensurePublishConnection() {
   }
 }
 
+// Bounded FIFO cache used for msgRetryCounterCache in each Baileys socket.
+// Prevents unbounded growth of the default internal cache under high message volume.
+class BoundedCache {
+  constructor(maxSize = 500) {
+    this._max = maxSize
+    this._store = new Map()
+  }
+  get(key) { return this._store.get(key) }
+  set(key, value) {
+    if (this._store.size >= this._max) {
+      this._store.delete(this._store.keys().next().value)
+    }
+    this._store.set(key, value)
+  }
+  del(key) { this._store.delete(key) }
+  flushAll() { this._store.clear() }
+}
+
 const sockets = new Map()
 const connectedClients = new Set()
 const senderLoops = new Set()
@@ -67,6 +86,17 @@ const reconnectAttempts = new Map()
 const recentNewLoginAt = new Map()
 const stoppedClients = new Set()
 const reconnectTimers = new Map()
+const clientPinoLoggers = new Map()
+
+function getOrCreateClientLogger(clientId) {
+  if (!clientPinoLoggers.has(clientId)) {
+    clientPinoLoggers.set(
+      clientId,
+      Pino({ level: "silent" }).child({ level: "silent" })
+    )
+  }
+  return clientPinoLoggers.get(clientId)
+}
 
 async function markActive(clientId) {
   try {
@@ -137,6 +167,17 @@ async function publishEvent(event) {
   }
 }
 
+async function logMessage(clientId, entry) {
+  try {
+    const key = `wa:msglog:${clientId}`
+    await redis.zadd(key, entry.sentAt, JSON.stringify(entry))
+    const cutoff = Date.now() - MSGLOG_TTL_MS
+    await redis.zremrangebyscore(key, '-inf', cutoff)
+  } catch (err) {
+    warn(`⚠️ Failed to write message log for ${clientId}: ${err && err.message ? err.message : err}`)
+  }
+}
+
 async function initClient(clientId) {
 
   if (initializingClients.has(clientId)) {
@@ -162,7 +203,8 @@ async function initClient(clientId) {
 
     const sock = makeWASocket({
       auth: state,
-      logger: Pino({ level: "silent" }).child({level: "silent" }),
+      logger: getOrCreateClientLogger(clientId),
+      msgRetryCounterCache: new BoundedCache(500),
       printQRInTerminal: false,
       markOnlineOnConnect: false,
       version,
@@ -453,7 +495,22 @@ async function startSenderLoop(clientId) {
       try {
         await sendMessageWithMedia(sock, jid, payload)
         clientLog(clientId, "info", `sent -> ${payload.phoneNumber}`)
+        await logMessage(clientId, {
+          phoneNumber: String(payload.phoneNumber),
+          sentAt: Date.now(),
+          status: "sent",
+          text: payload.text || null,
+          fileCount: Array.isArray(payload.files) ? payload.files.length : 0
+        })
       } catch (sendErr) {
+        await logMessage(clientId, {
+          phoneNumber: String(payload.phoneNumber),
+          sentAt: Date.now(),
+          status: "failed",
+          text: payload.text || null,
+          fileCount: Array.isArray(payload.files) ? payload.files.length : 0,
+          failReason: sendErr && sendErr.message ? sendErr.message : String(sendErr)
+        })
         clientLog(clientId, "error", `❌ Send failed, re-queueing: ${sendErr && sendErr.message ? sendErr.message : sendErr}`)
         // Push back to the right so it stays the next item to retry (FIFO-safe retry).
         await queueRedis.rpush(`wa:pending:${clientId}`, raw)
@@ -551,6 +608,7 @@ async function deleteClient(clientId) {
   } catch {}
 
   clearSession(clientId)
+  clientPinoLoggers.delete(clientId)
 
   await publishEvent({
     type: "status",
@@ -583,6 +641,7 @@ module.exports = {
       stoppedClients.clear()
       reconnectTimers.forEach((timer) => clearTimeout(timer))
       reconnectTimers.clear()
+      clientPinoLoggers.clear()
     },
     setConnectedSocket(clientId, sock) {
       sockets.set(clientId, sock)

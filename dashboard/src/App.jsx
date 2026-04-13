@@ -25,6 +25,12 @@ function App() {
   const [queueData, setQueueData] = useState(null)
   const [queueLoading, setQueueLoading] = useState(false)
   const [queueError, setQueueError] = useState("")
+  const [bottomTab, setBottomTab] = useState("queue")
+  const [msgLogLookupId, setMsgLogLookupId] = useState("")
+  const [msgLogClientId, setMsgLogClientId] = useState("")
+  const [msgLogData, setMsgLogData] = useState(null)
+  const [msgLogLoading, setMsgLogLoading] = useState(false)
+  const [msgLogError, setMsgLogError] = useState("")
   const [loading, setLoading] = useState(false)
   const [lastRefresh, setLastRefresh] = useState(null)
 
@@ -164,6 +170,24 @@ function App() {
       setQueueError(`Failed to load queue for ${clientId}`)
     } finally {
       setQueueLoading(false)
+    }
+  }
+
+  async function loadMsgLog(clientId) {
+    if (!clientId) return
+    setMsgLogClientId(clientId)
+    setMsgLogLookupId(clientId)
+    setMsgLogLoading(true)
+    setMsgLogError("")
+    setBottomTab("msglog")
+    try {
+      const data = await apiGet(`/clients/${encodeURIComponent(clientId)}/messages/log?limit=100`)
+      setMsgLogData(data)
+    } catch (err) {
+      setMsgLogData(null)
+      setMsgLogError(`Failed to load message logs for ${clientId}`)
+    } finally {
+      setMsgLogLoading(false)
     }
   }
 
@@ -339,12 +363,18 @@ function App() {
                   </div>
                   <div className="row-actions">
                     <button
-                      className={queueClientId === clientId ? "active-action" : ""}
-                      onClick={() => loadQueue(clientId)}
+                      className={queueClientId === clientId && bottomTab === "queue" ? "active-action" : ""}
+                      onClick={() => { setBottomTab("queue"); loadQueue(clientId) }}
                     >
                       View Queue
                     </button>
                     <button onClick={() => clearQueue(clientId, true)}>Clear Queue</button>
+                    <button
+                      className={msgLogClientId === clientId && bottomTab === "msglog" ? "active-action" : ""}
+                      onClick={() => loadMsgLog(clientId)}
+                    >
+                      View Logs
+                    </button>
                     <button onClick={() => reconnectClient(clientId)}>Reconnect</button>
                     <button className="btn-restart" onClick={() => restartClient(clientId, false)}>Restart</button>
                     <button className="btn-restart" onClick={() => restartClient(clientId, true)}>Reset+Restart</button>
@@ -382,61 +412,146 @@ function App() {
 
       <section className="grid">
         <div className="card">
-          <div className="section-title">Client Queue</div>
-          <div className="queue-lookup">
-            <input
-              value={queueLookupId}
-              onChange={(e) => setQueueLookupId(e.target.value)}
-              placeholder="Enter clientId to view queue (including non-created clients)"
-            />
-            <button onClick={() => loadQueue(queueLookupId.trim())} disabled={!queueLookupId.trim() || queueLoading}>
-              View Queue
+          <div className="tab-bar">
+            <button
+              className={bottomTab === "queue" ? "tab active-tab" : "tab"}
+              onClick={() => setBottomTab("queue")}
+            >
+              Client Queue
             </button>
-            <button onClick={() => clearQueue(queueLookupId.trim(), true)} disabled={!queueLookupId.trim() || queueLoading}>
-              Clear Queue
+            <button
+              className={bottomTab === "msglog" ? "tab active-tab" : "tab"}
+              onClick={() => setBottomTab("msglog")}
+            >
+              Message Logs
             </button>
           </div>
-          {!queueClientId && <div className="empty">Pick a client and click View Queue.</div>}
-          {queueClientId && (
+
+          {bottomTab === "queue" && (
             <>
-              <div className="queue-header">
-                <div className="meta">
-                  Client: {queueClientId} · Total queued: {queueData?.total ?? "-"} · Showing: {queueData?.returned ?? 0}
-                </div>
-                <div className="queue-actions">
-                  <button onClick={() => loadQueue(queueClientId)} disabled={queueLoading}>
-                    {queueLoading ? "Loading..." : "Refresh Queue"}
-                  </button>
-                  <button onClick={() => clearQueue(queueClientId, true)} disabled={queueLoading}>
-                    Clear Queue
-                  </button>
-                </div>
+              <div className="queue-lookup">
+                <input
+                  value={queueLookupId}
+                  onChange={(e) => setQueueLookupId(e.target.value)}
+                  placeholder="Enter clientId to view queue (including non-created clients)"
+                />
+                <button onClick={() => loadQueue(queueLookupId.trim())} disabled={!queueLookupId.trim() || queueLoading}>
+                  View Queue
+                </button>
+                <button onClick={() => clearQueue(queueLookupId.trim(), true)} disabled={!queueLookupId.trim() || queueLoading}>
+                  Clear Queue
+                </button>
               </div>
-              {queueError && <div className="queue-error">{queueError}</div>}
-              <div className="queue-list">
-                {!queueLoading && queueData?.messages?.length === 0 && (
-                  <div className="empty">Queue is empty.</div>
-                )}
-                {queueData?.messages?.map((entry) => {
-                  const p = entry.parsed || {}
-                  return (
-                    <div key={`${entry.index}-${entry.raw?.slice(0, 20)}`} className="queue-item">
-                      <div className="queue-item-top">
-                        <strong>#{entry.index + 1}</strong>
-                        <span className="meta">
-                          {p.type || "UNKNOWN"} · {p.phoneNumber || "n/a"} · files: {Array.isArray(p.files) ? p.files.length : 0}
-                        </span>
-                      </div>
-                      <div className="queue-text">{p.text || "(no text)"}</div>
+              {!queueClientId && <div className="empty">Pick a client and click View Queue.</div>}
+              {queueClientId && (
+                <>
+                  <div className="queue-header">
+                    <div className="meta">
+                      Client: {queueClientId} · Total queued: {queueData?.total ?? "-"} · Showing: {queueData?.returned ?? 0}
                     </div>
-                  )
-                })}
+                    <div className="queue-actions">
+                      <button onClick={() => loadQueue(queueClientId)} disabled={queueLoading}>
+                        {queueLoading ? "Loading..." : "Refresh Queue"}
+                      </button>
+                      <button onClick={() => clearQueue(queueClientId, true)} disabled={queueLoading}>
+                        Clear Queue
+                      </button>
+                    </div>
+                  </div>
+                  {queueError && <div className="queue-error">{queueError}</div>}
+                  <div className="queue-list">
+                    {!queueLoading && queueData?.messages?.length === 0 && (
+                      <div className="empty">Queue is empty.</div>
+                    )}
+                    {queueData?.messages?.map((entry) => {
+                      const p = entry.parsed || {}
+                      return (
+                        <div key={`${entry.index}-${entry.raw?.slice(0, 20)}`} className="queue-item">
+                          <div className="queue-item-top">
+                            <strong>#{entry.index + 1}</strong>
+                            <span className="meta">
+                              {p.type || "UNKNOWN"} · {p.phoneNumber || "n/a"} · files: {Array.isArray(p.files) ? p.files.length : 0}
+                            </span>
+                          </div>
+                          <div className="queue-text">{p.text || "(no text)"}</div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </>
+              )}
+              <div className="meta">
+                Queue panel is read-only for payload details; use Clear Queue to drop pending jobs.
               </div>
             </>
           )}
-          <div className="meta">
-            Queue panel is read-only for payload details; use Clear Queue to drop pending jobs.
-          </div>
+
+          {bottomTab === "msglog" && (
+            <>
+              <div className="queue-lookup">
+                <input
+                  value={msgLogLookupId}
+                  onChange={(e) => setMsgLogLookupId(e.target.value)}
+                  placeholder="Enter clientId to view message logs"
+                />
+                <button onClick={() => loadMsgLog(msgLogLookupId.trim())} disabled={!msgLogLookupId.trim() || msgLogLoading}>
+                  View Logs
+                </button>
+              </div>
+              {!msgLogClientId && <div className="empty">Pick a client and click View Logs.</div>}
+              {msgLogClientId && (
+                <>
+                  <div className="queue-header">
+                    <div className="meta">
+                      Client: {msgLogClientId} · Total logged: {msgLogData?.total ?? "-"} · Showing: {msgLogData?.returned ?? 0} · Logs kept for 7 days
+                    </div>
+                    <div className="queue-actions">
+                      <button onClick={() => loadMsgLog(msgLogClientId)} disabled={msgLogLoading}>
+                        {msgLogLoading ? "Loading..." : "Refresh Logs"}
+                      </button>
+                    </div>
+                  </div>
+                  {msgLogError && <div className="queue-error">{msgLogError}</div>}
+                  <div className="queue-list">
+                    {!msgLogLoading && msgLogData?.messages?.length === 0 && (
+                      <div className="empty">No message logs yet.</div>
+                    )}
+                    {msgLogData?.messages?.map((entry, i) => {
+                      const ts = entry.sentAt
+                        ? new Date(entry.sentAt).toLocaleString()
+                        : "unknown time"
+                      const isFailed = entry.status === "failed"
+                      return (
+                        <div
+                          key={`${i}-${entry.sentAt}`}
+                          className={`queue-item${isFailed ? " queue-item-failed" : ""}`}
+                        >
+                          <div className="queue-item-top">
+                            <span className={`status-badge ${isFailed ? "status-failed" : "status-sent"}`}>
+                              {entry.status || "unknown"}
+                            </span>
+                            <span className="meta">
+                              {entry.phoneNumber || "n/a"} · files: {entry.fileCount ?? 0} · {ts}
+                            </span>
+                          </div>
+                          {entry.text && <div className="queue-text">{entry.text}</div>}
+                          {isFailed && entry.failReason && (
+                            <div className="queue-text fail-reason">Error: {entry.failReason}</div>
+                          )}
+                          {entry.parseError && (
+                            <div className="queue-text fail-reason">Malformed log entry</div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </>
+              )}
+              <div className="meta">
+                Logs are written per send attempt. Failed sends show error reason. Entries expire after 7 days.
+              </div>
+            </>
+          )}
         </div>
       </section>
     </div>

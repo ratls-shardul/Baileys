@@ -4,7 +4,7 @@ const assert = require("node:assert/strict")
 
 const { loadWithMocks, clearModule } = require("../../test/loadWithMocks")
 
-function createSocketManagerHarness() {
+function createSocketManagerHarness({ sendShouldFail = true } = {}) {
   const stateTransitions = []
   const clearedSessions = []
   const redisInstances = []
@@ -13,12 +13,16 @@ function createSocketManagerHarness() {
   const sentMessages = []
   let queueBrpopCalls = 0
   let requeued = []
+  let stopLoopAfterSend = null
   let stopLoopAfterRequeue = null
 
   class FakeRedis {
     constructor() {
       this.events = {}
       this.xaddCalls = []
+      this.zaddCalls = []
+      this.zremrangebyscoreCalls = []
+      this.deletedKeys = []
       redisInstances.push(this)
     }
 
@@ -35,6 +39,16 @@ function createSocketManagerHarness() {
       return "1-0"
     }
 
+    async zadd(key, score, member) {
+      this.zaddCalls.push({ key, score, member })
+      return 1
+    }
+
+    async zremrangebyscore(key, min, max) {
+      this.zremrangebyscoreCalls.push({ key, min, max })
+      return 0
+    }
+
     async sadd() {
       return 1
     }
@@ -47,7 +61,8 @@ function createSocketManagerHarness() {
       return "OK"
     }
 
-    async del() {
+    async del(key) {
+      this.deletedKeys.push(key)
       return 1
     }
 
@@ -134,7 +149,12 @@ function createSocketManagerHarness() {
     "./mediaSender": {
       async sendMessageWithMedia(sock, jid, payload) {
         sentMessages.push({ sock, jid, payload })
-        throw new Error("send failed")
+        if (sendShouldFail) {
+          throw new Error("send failed")
+        }
+        if (stopLoopAfterSend) {
+          stopLoopAfterSend()
+        }
       }
     },
     "./logger": {
@@ -154,6 +174,10 @@ function createSocketManagerHarness() {
     socketManager._test.stopSenderLoop("client-1")
   }
 
+  stopLoopAfterSend = () => {
+    socketManager._test.stopSenderLoop("client-1")
+  }
+
   return {
     socketManager,
     stateTransitions,
@@ -164,6 +188,9 @@ function createSocketManagerHarness() {
     sentMessages,
     getQueueBrpopCalls: () => queueBrpopCalls,
     getRequeued: () => requeued,
+    getZaddCalls: () => redisInstances.flatMap(r => r.zaddCalls),
+    getZremCalls: () => redisInstances.flatMap(r => r.zremrangebyscoreCalls),
+    getDeletedKeys: () => redisInstances.flatMap(r => r.deletedKeys),
     restore
   }
 }
@@ -265,6 +292,115 @@ test("duplicate initClient returns the existing socket without resetting state",
 
   assert.equal(secondSocket, firstSocket)
   assert.equal(harness.stateTransitions.length, stateCountAfterFirstInit)
+})
+
+test("failed send is logged with status failed and failReason before re-queueing", async (t) => {
+  const harness = createSocketManagerHarness({ sendShouldFail: true })
+  t.after(() => harness.restore())
+
+  harness.socketManager._test.resetState()
+
+  const originalSetTimeout = global.setTimeout
+  global.setTimeout = (fn) => { fn(); return 0 }
+  t.after(() => { global.setTimeout = originalSetTimeout })
+
+  harness.socketManager._test.setConnectedSocket("client-1", { id: "sock-1" })
+  await harness.socketManager.startSenderLoop("client-1")
+
+  const zaddCalls = harness.getZaddCalls().filter(c => c.key === "wa:msglog:client-1")
+  assert.equal(zaddCalls.length, 1)
+
+  const entry = JSON.parse(zaddCalls[0].member)
+  assert.equal(entry.status, "failed")
+  assert.equal(entry.phoneNumber, "9999999999")
+  assert.equal(entry.text, "hello")
+  assert.equal(entry.fileCount, 0)
+  assert.equal(typeof entry.failReason, "string")
+  assert.ok(entry.failReason.length > 0)
+  assert.ok(typeof entry.sentAt === "number")
+})
+
+test("failed send triggers TTL trim on the message log key", async (t) => {
+  const harness = createSocketManagerHarness({ sendShouldFail: true })
+  t.after(() => harness.restore())
+
+  harness.socketManager._test.resetState()
+
+  const originalSetTimeout = global.setTimeout
+  global.setTimeout = (fn) => { fn(); return 0 }
+  t.after(() => { global.setTimeout = originalSetTimeout })
+
+  harness.socketManager._test.setConnectedSocket("client-1", { id: "sock-1" })
+  await harness.socketManager.startSenderLoop("client-1")
+
+  const zremCalls = harness.getZremCalls().filter(c => c.key === "wa:msglog:client-1")
+  assert.equal(zremCalls.length, 1)
+  assert.equal(zremCalls[0].min, "-inf")
+  assert.ok(typeof zremCalls[0].max === "number")
+})
+
+test("successful send is logged with status sent", async (t) => {
+  const harness = createSocketManagerHarness({ sendShouldFail: false })
+  t.after(() => harness.restore())
+
+  harness.socketManager._test.resetState()
+
+  const originalSetTimeout = global.setTimeout
+  global.setTimeout = (fn) => { fn(); return 0 }
+  t.after(() => { global.setTimeout = originalSetTimeout })
+
+  harness.socketManager._test.setConnectedSocket("client-1", { id: "sock-1" })
+  await harness.socketManager.startSenderLoop("client-1")
+
+  const zaddCalls = harness.getZaddCalls().filter(c => c.key === "wa:msglog:client-1")
+  assert.equal(zaddCalls.length, 1)
+
+  const entry = JSON.parse(zaddCalls[0].member)
+  assert.equal(entry.status, "sent")
+  assert.equal(entry.phoneNumber, "9999999999")
+  assert.equal(entry.text, "hello")
+  assert.equal(entry.fileCount, 0)
+  assert.equal(entry.failReason, undefined)
+  assert.ok(typeof entry.sentAt === "number")
+})
+
+test("deleteClient does not delete the message log key", async (t) => {
+  const harness = createSocketManagerHarness()
+  t.after(() => harness.restore())
+
+  await harness.socketManager.initClient("client-1")
+  await harness.socketManager.deleteClient("client-1")
+
+  const deletedKeys = harness.getDeletedKeys()
+  assert.ok(!deletedKeys.includes("wa:msglog:client-1"),
+    "wa:msglog:client-1 must not be deleted on deleteClient — TTL handles expiry")
+})
+
+test("logMessage errors do not affect message delivery or requeue", async (t) => {
+  // If zadd throws, the message must still be requeued (failure path) without crashing the loop
+  const harness = createSocketManagerHarness({ sendShouldFail: true })
+  t.after(() => harness.restore())
+
+  // Patch the first redis instance's zadd to throw after harness is created
+  // We need to intercept at the module level; use the redisInstances reference
+  // and override after the module loads
+  harness.socketManager._test.resetState()
+
+  const originalSetTimeout = global.setTimeout
+  global.setTimeout = (fn) => { fn(); return 0 }
+  t.after(() => { global.setTimeout = originalSetTimeout })
+
+  // Corrupt zadd on all redis instances to simulate logging failure
+  for (const inst of harness.redisInstances) {
+    inst.zadd = async () => { throw new Error("redis zadd error") }
+  }
+
+  harness.socketManager._test.setConnectedSocket("client-1", { id: "sock-1" })
+  await harness.socketManager.startSenderLoop("client-1")
+
+  // Message should still have been requeued despite logging failure
+  assert.equal(harness.getRequeued().length, 1)
+  assert.equal(harness.getRequeued()[0].key, "wa:pending:client-1")
 })
 
 test("sender-loop retries by re-queueing when send fails after dequeue", async (t) => {

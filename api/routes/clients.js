@@ -201,6 +201,38 @@ module.exports = async function (fastify) {
     }
   })
 
+  fastify.get("/clients/:clientId/messages/log", async (req, res) => {
+    const { clientId } = req.params
+    const requestedLimit = Number(req.query && req.query.limit)
+    const limit = Number.isFinite(requestedLimit)
+      ? Math.min(Math.max(Math.floor(requestedLimit), 1), 200)
+      : 50
+
+    const beforeParam = (req.query && req.query.before)
+      ? String(req.query.before)
+      : "+inf"
+
+    const key = `wa:msglog:${clientId}`
+    const total = await redis.zcard(key)
+    const rows = await redis.zrevrangebyscore(key, beforeParam, "-inf", "LIMIT", 0, limit)
+
+    const messages = rows.map((raw) => {
+      try {
+        return JSON.parse(raw)
+      } catch {
+        return { raw, parseError: true }
+      }
+    })
+
+    return {
+      clientId,
+      total,
+      returned: messages.length,
+      limit,
+      messages
+    }
+  })
+
   fastify.get("/clients/:clientId/status", async (req, res) => {
     const { clientId } = req.params
     const state = await redis.hget(STATE_KEY, clientId)
